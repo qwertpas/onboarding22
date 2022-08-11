@@ -11,4 +11,4 @@ How to get started:
 * Restart terminal and run `pip3 install -r requirements.txt`
   * after restarting the terminal, there should be "(.venv)" before any commands 
   * will install modules like numpy, scipy, matplotlib
-* see if it works
+* see if it works!
