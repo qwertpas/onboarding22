@@ -18,7 +18,7 @@ class Car:
 
 
 def main():
-    car = Car('brizo')
+    car = Car('bRiZO')
     print(car.get_drag_coeff())
 
 if __name__ == "__main__":
