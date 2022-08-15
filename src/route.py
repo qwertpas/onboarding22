@@ -1,6 +1,7 @@
+from datetime import date
 import numpy as np
 import pandas as pd
-from scipy.interpolate import LinearNDInterpolator
+from scipy.interpolate import LinearNDInterpolator, interp1d
 import pickle
 import os
 import json
@@ -14,35 +15,54 @@ class Route():
         self.leg_list = []
 
 
-    def addBaseLeg(self, leg_csv):
+    def add_base_leg(self, leg_csv, start):
         df = pd.read_csv(leg_csv)
 
         name = df['name'].iat[0] #get name from first row
 
-        #if in US units, convert to metric
-        if('altitude (ft)' in df.columns):
-            df['altitude (m)'] = df['altitude (ft)'] * 0.3048
-        if('distance (mi)' in df.columns):
-            df['distance (km)'] = df['distance (mi)'] * 1.60934
-        if('distance_interval (ft)' in df.columns):
-            df['distance_interval (m)'] = df['distance_interval (ft)'] * 0.3048
+        df.fillna(method='bfill', inplace=True) #fill leading NaNs with the first valid value
 
-        df.fillna(method='bfill', inplace=True)
+        #convert distance to meters
+        if('distance (mi)' in df.columns):
+            df['distance (m)'] = df['distance (mi)'] * 1609.34
+        else:
+            assert 'distance (km)' in df.columns
+            df['distance (m)'] = df['distance (km)'] * 1000            
+
+        #convert to radians
+        df['slope (rad)'] = np.arctan(df['slope (%)'].values * 0.01)
+
+        dists_raw = df['distance (m)'].values
+        longitude_interp = interp1d(dists_raw, df['longitude'].values, fill_value="extrapolate")
+        latitude_interp = interp1d(dists_raw, df['latitude'].values, fill_value="extrapolate")
+        slope_interp = interp1d(dists_raw, df['slope (%)'].values, fill_value="extrapolate")
+        headings_interp = interp1d(dists_raw, df['longitude'].values, fill_value="extrapolate")
+
+        dists = np.arange(0, dists_raw[-1]+100, 100)
+        longitudes = longitude_interp(dists)
+        latitudes = latitude_interp(dists)
+        slopes = slope_interp(dists)
+        headings = headings_interp(dists)
         
         self.leg_list.append({
             'name': name,
-            'longitudes': df['longitude'].values,
-            'latitudes': df['latitude'].values,
-            'dists_m': df['distance (km)'].values * 1000,
-            'dist_intervals_m': df['distance_interval (m)'].values,
-            'slopes_rad': np.arctan(df['slope (%)'].values * 0.01),
-            'headings_rad': np.deg2rad(df['course'].values),
+            'dists': dists,
+            'longitudes': longitudes,
+            'latitudes': latitudes,
+            'slopes': slopes,
+            'headings': headings,
         })
 
-    def addLoop(self, loop_dists, loop_slopes, loop_headings):
+    #if date already exists in 
+    def query_weather(self, day: date, override=False):
+        for leg in self.leg_list:
+            if('day' not in leg)
+            date.year
+
+    def add_loop(self, loop_dists, loop_slopes, loop_headings):
         return
 
-    def saveAs(self, name):
+    def save_as(self, name):
         with open(dir + '/route_data/saved_routes/' + name + '.route', "wb") as f:
             pickle.dump(self, f)
 
@@ -53,9 +73,9 @@ class Route():
 
 def main():
     route = Route()
-    route.addBaseLeg(dir + '/route_data/gps/asc2022/stage1_ckpt1.csv')
+    route.add_base_leg(dir + '/route_data/gps/asc2022/stage1_ckpt1.csv')
 
-    route.saveAs("test")
+    route.save_as("test")
     new_route = Route.open('test')
 
     print_dict(new_route.leg_list[0])
