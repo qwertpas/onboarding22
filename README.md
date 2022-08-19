@@ -12,3 +12,4 @@ How to get started:
   * after restarting the terminal, there should be "(.venv)" before any commands 
   * will install modules like numpy, scipy, matplotlib
 * see if it works!
+  * click yes if prompted to install python and jupyter notebook extensions
