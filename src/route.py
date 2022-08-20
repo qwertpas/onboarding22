@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 import numpy as np
 import pandas as pd
 from scipy.interpolate import LinearNDInterpolator, interp1d
@@ -17,6 +17,10 @@ except:
     from util import *      #when route.py is being run directly
 
 dir = os.path.dirname(__file__)
+
+
+START_HOUR = 9      #when solar starts driving
+STOP_HOUR = 18      #when solar stops driving
 
 
 class Route():
@@ -64,17 +68,21 @@ class Route():
         return geo
 
 
-    def add_leg(self, csv_path:str, start:datetime, open:datetime, close:datetime): 
+    def add_leg(self, type:str, csv_path:str, start:datetime, open:datetime, close:datetime): 
         '''
-            add a dict containing the geographic info of a base leg, in interpolant form.
-            To get the slope at a distance d, use leg_list['slope'](d)
-        '''        
+            Add a dict to the route containing info of a base leg or loop. 
+            Set type to 'base' or 'loop'. Set start to the first possible time that one can drive the leg,
+            open to when the checkpoint/stagestop at the end of the leg opens, and close when one must 
+            finish the leg. 
+            Geographic data are interp1d objects. To get the slope at a distance d: leg_list\['slope'](d)
+        '''
+        assert type=='base' or type=='loop'
         geo = Route.get_geography(csv_path)
         self.total_length += geo['length']
         self.leg_list.append({
             'name': geo['name'],
             'length': geo['length'],
-            'type': 'base',
+            'type': type,
             'start': start,
             'open': open,
             'close': close,
@@ -85,28 +93,12 @@ class Route():
             'heading': geo['heading'],
         })
 
-    def add_loop_leg(self, csv_path:str, start:datetime, open:datetime, close:datetime):   
-        '''
-            add a dict containing the geographic info of a loop, in interpolant form.
-            To get the slope at a distance d, use leg_list\['slope'](d)
-        '''   
-        geo = Route.get_geography(csv_path)
-        self.total_length += geo['length']
-        self.leg_list.append({
-            'name': geo['name'],
-            'length': geo['length'],
-            'type': 'loop',
-            'start': start,
-            'open': open,
-            'close': close,
-            'longitude': geo['longitude'],
-            'latitude': geo['latitude'],
-            'slope': geo['slope'],
-            'altitude': geo['altitude'],
-            'heading': geo['heading'],
-        })
 
-    def gen_weather(self, start_leg=0, stop_leg=-1, dist_step=miles2meters(15), start_time=9):
+    def gen_weather(self, start_leg=0, stop_leg=-1, dist_step=miles2meters(15), fakeRequest=False):
+        '''
+        Generate 
+        Weather data are 2D linear interpolants. To get the irradiance at a distance d and time t: leg_list\['solarradiance'](d, t)
+        '''
         
         if(stop_leg == None or stop_leg == -1):
             stop_leg = len(self.leg_list)
@@ -145,27 +137,51 @@ class Route():
                 latitude = leg['latitude'](dist)
                 longitude = leg['longitude'](dist)
 
-                start_date = leg['open']
-                year = start_date.year
-                month = start_date.month
-                start_day = start_date.day
-                num_days = (leg['close'].day - start_day) + 1
+                num_days = leg['close'].day - leg['start'].day + 1      #number of days that the leg can span
 
-                df, records_used_pt = visualcrossing.get_weather_range(
-                    latitude, longitude,
-                    start_day=datetime(year, month, start_day),
-                    num_days=num_days,
-                    doPrint=False
-                )
-                records_used += records_used_pt
+                leg['max_time'] = (leg['close'] - leg['start']).total_seconds()/3600. - (START_HOUR-STOP_HOUR+24)*(num_days-1)
+                leg['min_time'] = (leg['open'] - leg['start']).total_seconds()/3600. - (START_HOUR-STOP_HOUR+24)*(num_days-1)
 
-                for index, row in df.iterrows():    #iterate through each hour of forecast
-                    weather_pts.append((dist, row['datetimeEpoch']))
+                querytime = leg['start']
 
-                    for key in weather_vals:         #iterate through solar, wind, etc.
-                        weather_vals[key].append(row[key]) 
+                while(querytime < leg['close']):
+                    conditions = visualcrossing.get_weather_hour(
+                        latitude, longitude, 
+                        querytime, 
+                        doPrint=False,
+                        fakeRequest=fakeRequest,
+                    )['currentConditions']
+                    records_used += 1
 
-            print("Done getting weather at points, start interpolating")
+                    weather_pts.append((dist, conditions['datetimeEpoch']))
+                    for key in weather_vals:
+                        weather_vals[key].append(conditions[key])
+
+
+                    if(querytime.hour == STOP_HOUR):    #move to the start time on the next day
+                        querytime = datetime(querytime.year, querytime.month, querytime.day + 1, hour=START_HOUR)
+                    else:
+                        querytime = querytime + timedelta(hours=1)
+
+
+                
+
+
+                # df, records_used_pt = visualcrossing.get_weather_range(
+                #     latitude, longitude,
+                #     start_day=datetime(year, month, start_day),
+                #     num_days=num_days,
+                #     doPrint=False
+                # )
+                # records_used += records_used_pt
+
+                # for index, row in df.iterrows():    #iterate through each hour of forecast
+                #     weather_pts.append((dist, row['datetimeEpoch']))
+
+                #     for key in weather_vals:         #iterate through solar, wind, etc.
+                #         weather_vals[key].append(row[key]) 
+
+            print("Done getting weather at points, start building interpolants")
             for key in weather_vals:
                 interp = LinearNDInterpolator(points=weather_pts, values=weather_vals[key])
                 leg[key] = interp #add interp to leg dict
@@ -186,33 +202,38 @@ class Route():
 
 def main():
 
-    # Generate route: 
-    route = Route()
-    route.add_base_leg(
-        dir + '/route_data/gps/asc2022/stage1_ckpt1.csv', 
-        open=   datetime(2022, 7, 9, 11, 15),
-        release=datetime(2022, 7, 9, 13, 45),
-        close=  datetime(2022, 7, 9, 13, 45),
-    )
-    route.add_loop_leg(
-        dir + '/route_data/gps/asc2022/stage1_ckpt1_loop.csv', 
-        open=   datetime(2022, 7, 9, 11, 15),
-        close=  datetime(2022, 7, 9, 14, 00),
-    )
-    route.add_base_leg(
-        dir + '/route_data/gps/asc2022/stage1_ckpt2.csv', 
-        open=   datetime(2022, 7, 10, 9, 00),
-        release=datetime(2022, 7, 11, 18, 00),
-        close=  datetime(2022, 7, 10, 18, 00),
-    )
-    route.add_loop_leg(
-        dir + '/route_data/gps/asc2022/stage1_ckpt2_loop.csv', 
-        open=   datetime(2022, 7, 10, 11, 15),
-        close=  datetime(2022, 7, 10, 14, 00),
-    )
-
-    # route.gen_weather(dist_step=10000)
-    route.save_as("ind-gra_2022,7,9-10_10km")
+    # # Generate route: 
+    # route = Route()
+    # route.add_leg(
+    #     type =      'base',
+    #     csv_path =  dir + '/route_data/gps/asc2022/stage1_ckpt1.csv', 
+    #     start =     datetime(2022, 7, 9, 9, 00),
+    #     open =      datetime(2022, 7, 9, 11, 15),
+    #     close =     datetime(2022, 7, 9, 13, 45),
+    # )
+    # route.add_leg(
+    #     type =      'loop',
+    #     csv_path =  dir + '/route_data/gps/asc2022/stage1_ckpt1_loop.csv', 
+    #     start =     datetime(2022, 7, 9, 12, 00),   #add 45min to ckpt open for hold time
+    #     open =      datetime(2022, 7, 9, 11, 15),
+    #     close =     datetime(2022, 7, 9, 14, 00),
+    # )
+    # route.add_leg(
+    #     type =      'base',
+    #     csv_path =  dir + '/route_data/gps/asc2022/stage1_ckpt2.csv', 
+    #     start =     datetime(2022, 7, 9, 13, 45),   #ckpt1 earliest release time
+    #     open =      datetime(2022, 7, 10, 9, 00),
+    #     close =     datetime(2022, 7, 10, 18, 00),
+    # )
+    # route.add_leg(
+    #     type =      'loop',
+    #     csv_path =  dir + '/route_data/gps/asc2022/stage1_ckpt2_loop.csv', 
+    #     start =     datetime(2022, 7, 10, 9, 45),   #add 45min to stage open for hold time
+    #     open =      datetime(2022, 7, 10, 9, 00),
+    #     close =     datetime(2022, 7, 10, 18, 00),
+    # )
+    # route.gen_weather(dist_step=10000, fakeRequest=True)
+    # route.save_as("ind-gra_2022,7,9-10_10km_fixed")
 
 
     new_route = Route.open("ind-gra_2022,7,9-10_10km")
@@ -225,23 +246,23 @@ def main():
         print_dict(leg)
         print('\n')
 
-        # dist_min = 0
-        # dist_max = leg['length']
-        # dist_res = 1000     #1 km
-        # time_min = datetime(2022, 8, 2, 7, 0).timestamp()
-        # time_max = datetime(2022, 8, 2, 20, 0).timestamp()
-        # time_res = 30*60    #30 minutes
+        dist_min = 0
+        dist_max = leg['length']
+        dist_res = 1000     #1 km
+        time_min = leg['start'].timestamp()
+        time_max = leg['close'].timestamp()
+        time_res = 10*60    #30 minutes
         
-        # Dists, Times = np.mgrid[dist_min:dist_max:dist_res, time_min:time_max:time_res]
+        Dists, Times = np.mgrid[dist_min:dist_max:dist_res, time_min:time_max:time_res]
 
-        # fig = plt.figure()
-        # plt.scatter(to_dates(Times.flatten()), meters2miles(Dists.flatten()), c=leg['solarradiation'](Dists, Times).flatten(), cmap='inferno')
+        fig = plt.figure()
+        plt.scatter(to_dates(Times.flatten()), meters2miles(Dists.flatten()), c=leg['solarradiation'](Dists, Times).flatten(), cmap='inferno')
 
 
         # test_pt = (10000, datetime(2022, 8, 2, 12, 30).timestamp())
 
 
-    # plt.show()
+    plt.show()
 
 if __name__ == "__main__":
     main()
