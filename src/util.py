@@ -8,22 +8,22 @@ dir = os.path.dirname(__file__)
 
 to_dates = np.vectorize(datetime.fromtimestamp)
 
-def meters_to_miles(meters):
+def meters2miles(meters):
     return meters * 0.0006214
 
-def miles_to_meters(miles):
+def miles2meters(miles):
     return miles * 1609.34
 
-def feet_to_meters(feet):
+def feet2meters(feet):
     return feet * 0.3048
 
-def meters_to_feet(meters):
+def meters2feet(meters):
     return meters * 3.28
 
-def mpersec(mph):
+def mph2mpersec(mph):
     return mph * 0.44704
 
-def mph(mpersec):
+def mpersec2mph(mpersec):
     return mpersec * 2.23694
 
 def latlong_dist(origin, destination):
