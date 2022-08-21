@@ -30,6 +30,7 @@ class RaceEnv(gym.Env):
 
         self.leg_index = 0
         self.leg_progress = 0
+        self.speed = 0
         self.energy = 0
         self.time = self.legs[0]['start']
         self.miles_earned = 0
@@ -39,7 +40,7 @@ class RaceEnv(gym.Env):
         self.trailered = False
 
         self.observation_spaces= spaces.Dict({
-            "dist_traveled": spaces.Box(0, self.route.total_length),
+            "dist_traveled": spaces.Box(0, self.total_length),
             "slope": spaces.Box(-10, 10)
         })
 
@@ -60,8 +61,8 @@ class RaceEnv(gym.Env):
 
     def _get_obs(self):
         return {
-            "agent": self._agent_location, 
-            "target": self._target_location,
+            'speed': self.speed,
+            'energy': self.energy,
         }
 
     def reset(self, energy_budget=5400):
@@ -72,16 +73,8 @@ class RaceEnv(gym.Env):
         self.time = self.legs[0]['start']
         self.energy = 0
 
-        # Choose the agent's location uniformly at random
-        self._agent_location = self.np_random.integers(0, self.size, size=2, dtype=int)
-
-        # We will sample the target's location randomly until it does not coincide with the agent's location
-        self._target_location = self._agent_location
-        while np.array_equal(self._target_location, self._agent_location):
-            self._target_location = self.np_random.integers(0, self.size, size=2, dtype=int)
-
+        
         observation = self._get_obs()
-
         self._renderer.reset()
         self._renderer.render_step()
 
@@ -99,12 +92,12 @@ class RaceEnv(gym.Env):
         #array of charging times in seconds, spaced a minute apart
         np.arange(self.time.timestamp(), end_time.timestamp()+60, step=60) 
 
-        leg['solar'](dist, )
+        # leg['solar'](dist, )
 
 
         if updateTime: self.time += time_length
 
-        self.energy += solar_func(self.leg_progress, self.time) * time_length
+        # self.energy += solar_func(self.leg_progress, self.time) * time_length
 
     def start_next_base_leg(self):
         while(not self.legs[self.leg_index]['type'] == 'base'):
@@ -230,30 +223,29 @@ class RaceEnv(gym.Env):
     def step(self, action):
 
         
-        action['target_m/s']
+        # action['target_m/s']
 
-        power_ff = v/K_m * (K_d*(v - w)^2) + K_f + K_g*sin(slope)
-        accel = K_m * power_ext / v
+        # power_ff = v/K_m * (K_d*(v - w)^2) + K_f + K_g*sin(slope)
+        # accel = K_m * power_ext / v
 
-        power_ext = accel * v / K_m
+        # power_ext = accel * v / K_m
 
-        power_total = power_ff + power_ext
+        # power_total = power_ff + power_ext
 
-        energy -= power_total
+        # energy -= power_total
 
         
+        reward = 1 if self.done else 0  # Binary sparse rewards
 
+        self.timing()
 
-        done = np.array_equal(self._agent_location, self._target_location)
-
-        reward = 1 if done else 0  # Binary sparse rewards
 
         observation = self._get_obs()
-        info = self._get_info()
 
-        self._renderer.render_step()
+        # self._renderer.render_step()
 
-        return observation, reward, done, info
+        return observation, reward, self.done
+
 
     def render(self):
         return self._renderer.get_renders()
@@ -271,42 +263,8 @@ class RaceEnv(gym.Env):
         canvas = pygame.Surface((self.window_size, self.window_size))
         canvas.fill((255, 255, 255))
         pix_square_size = (
-            self.window_size / self.size
+            self.window_size
         )  # The size of a single grid square in pixels
-
-        # First we draw the target
-        pygame.draw.rect(
-            canvas,
-            (255, 0, 0),
-            pygame.Rect(
-                pix_square_size * self._target_location,
-                (pix_square_size, pix_square_size),
-            ),
-        )
-        # Now we draw the agent
-        pygame.draw.circle(
-            canvas,
-            (0, 0, 255),
-            (self._agent_location + 0.5) * pix_square_size,
-            pix_square_size / 3,
-        )
-
-        # Finally, add some gridlines
-        for x in range(self.size + 1):
-            pygame.draw.line(
-                canvas,
-                0,
-                (0, pix_square_size * x),
-                (self.window_size, pix_square_size * x),
-                width=3,
-            )
-            pygame.draw.line(
-                canvas,
-                0,
-                (pix_square_size * x, 0),
-                (pix_square_size * x, self.window_size),
-                width=3,
-            )
 
         if mode == "human":
             # The following line copies our drawings from `canvas` to the visible window
@@ -340,19 +298,23 @@ def main():
 
     obs = env.reset()
 
+    action = env.action_space.sample()
 
-    while True:
-        # Take a random action
-        action = env.action_space.sample()
-        obs, reward, done, info = env.step(action)
-        
-        # Render the game
-        env.render()
-        
-        if done == True:
-            break
+    observation, reward, done = env.step(action)
 
-    env.close()
+
+    # while True:
+    #     # Take a random action
+    #     action = env.action_space.sample()
+    #     observation, reward, done = env.step(action)
+        
+    #     # Render the game
+    #     env.render()
+        
+    #     if done == True:
+    #         break
+
+    # env.close()
 
 
 
