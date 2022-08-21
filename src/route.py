@@ -68,7 +68,7 @@ class Route():
         return geo
 
 
-    def add_leg(self, type:str, csv_path:str, start:datetime, open:datetime, close:datetime): 
+    def add_leg(self, type:str, end:str, csv_path:str, start:datetime, open:datetime, close:datetime): 
         '''
             Add a dict to the route containing info of a base leg or loop. 
             Set type to 'base' or 'loop'. Set start to the first possible time that one can drive the leg,
@@ -77,12 +77,14 @@ class Route():
             Geographic data are interp1d objects. To get the slope at a distance d: leg_list\['slope'](d)
         '''
         assert type=='base' or type=='loop'
+        assert end=='checkpoint' or end=='stagestop'
         geo = Route.get_geography(csv_path)
         self.total_length += geo['length']
         self.leg_list.append({
             'name': geo['name'],
             'length': geo['length'],
             'type': type,
+            'end': end,
             'start': start,
             'open': open,
             'close': close,
@@ -184,61 +186,73 @@ class Route():
 
 def main():
 
-    # # Generate route: 
-    # route = Route()
-    # route.add_leg(
-    #     type =      'base',
-    #     csv_path =  dir + '/route_data/gps/asc2022/stage1_ckpt1.csv', 
-    #     start =     datetime(2022, 7, 9, 9, 00),
-    #     open =      datetime(2022, 7, 9, 11, 15),
-    #     close =     datetime(2022, 7, 9, 13, 45),
-    # )
-    # route.add_leg(
-    #     type =      'loop',
-    #     csv_path =  dir + '/route_data/gps/asc2022/stage1_ckpt1_loop.csv', 
-    #     start =     datetime(2022, 7, 9, 12, 00),   #add 45min to ckpt open for hold time
-    #     open =      datetime(2022, 7, 9, 11, 15),
-    #     close =     datetime(2022, 7, 9, 14, 00),
-    # )
-    # route.add_leg(
-    #     type =      'base',
-    #     csv_path =  dir + '/route_data/gps/asc2022/stage1_ckpt2.csv', 
-    #     start =     datetime(2022, 7, 9, 13, 45),   #ckpt1 earliest release time
-    #     open =      datetime(2022, 7, 10, 9, 00),
-    #     close =     datetime(2022, 7, 10, 18, 00),
-    # )
-    # route.add_leg(
-    #     type =      'loop',
-    #     csv_path =  dir + '/route_data/gps/asc2022/stage1_ckpt2_loop.csv', 
-    #     start =     datetime(2022, 7, 10, 9, 45),   #add 45min to stage open for hold time
-    #     open =      datetime(2022, 7, 10, 9, 00),
-    #     close =     datetime(2022, 7, 10, 18, 00),
-    # )
+    # Generate route: 
+    route = Route()
+    route.add_leg(
+        type =      'base',
+        end =       'checkpoint',
+        csv_path =  dir + '/route_data/gps/asc2022/stage1_ckpt1.csv', 
+        start =     datetime(2022, 7, 9, 9, 00),
+        open =      datetime(2022, 7, 9, 11, 15),
+        close =     datetime(2022, 7, 9, 13, 45),
+    )
+    route.add_leg(
+        type =      'loop',
+        end =       'checkpoint',
+        csv_path =  dir + '/route_data/gps/asc2022/stage1_ckpt1_loop.csv', 
+        start =     datetime(2022, 7, 9, 12, 00),   #add 45min to ckpt open for hold time
+        open =      datetime(2022, 7, 9, 11, 15),
+        close =     datetime(2022, 7, 9, 14, 00),
+    )
+    route.add_leg(
+        type =      'base',
+        end =       'stagestop',
+        csv_path =  dir + '/route_data/gps/asc2022/stage1_ckpt2.csv', 
+        start =     datetime(2022, 7, 9, 13, 45),   #ckpt1 earliest release time
+        open =      datetime(2022, 7, 10, 9, 00),
+        close =     datetime(2022, 7, 10, 18, 00),
+    )
+    route.add_leg(
+        type =      'loop',
+        end =       'stagestop',
+        csv_path =  dir + '/route_data/gps/asc2022/stage1_ckpt2_loop.csv', 
+        start =     datetime(2022, 7, 10, 9, 45),   #add 45min to stage open for hold time
+        open =      datetime(2022, 7, 10, 9, 00),
+        close =     datetime(2022, 7, 10, 18, 00),
+    )
     # route.gen_weather(dist_step=10000, fakeRequest=True)
     # route.save_as("ind-gra_2022,7,9-10_10km_fixed")
 
 
-    new_route = Route.open("ind-gra_2022,7,9-10_10km")
+    new_route = Route.open("ind-gra_2022,7,9-10_10km_ends")
 
     # print(len(new_route.leg_list))
 
     # print(new_route)
     print(new_route.total_length)
+
+    # new_route.leg_list[0]['end'] = 'checkpoint'
+    # new_route.leg_list[1]['end'] = 'checkpoint'
+    # new_route.leg_list[2]['end'] = 'stagestop'
+    # new_route.leg_list[3]['end'] = 'stagestop'
+
+    # new_route.save_as('ind-gra_2022,7,9-10_10km_ends')
+
     for leg in new_route.leg_list:
         print_dict(leg)
         print('\n')
 
-        dist_min = 0
-        dist_max = leg['length']
-        dist_res = 1000     #1 km
-        time_min = leg['start'].timestamp()
-        time_max = leg['close'].timestamp()
-        time_res = 10*60    #30 minutes
+        # dist_min = 0
+        # dist_max = leg['length']
+        # dist_res = 1000     #1 km
+        # time_min = leg['start'].timestamp()
+        # time_max = leg['close'].timestamp()
+        # time_res = 10*60    #30 minutes
         
-        Dists, Times = np.mgrid[dist_min:dist_max:dist_res, time_min:time_max:time_res]
+        # Dists, Times = np.mgrid[dist_min:dist_max:dist_res, time_min:time_max:time_res]
 
-        fig = plt.figure()
-        plt.scatter(to_dates(Times.flatten()), meters2miles(Dists.flatten()), c=leg['solarradiation'](Dists, Times).flatten(), cmap='inferno')
+        # fig = plt.figure()
+        # plt.scatter(to_dates(Times.flatten()), meters2miles(Dists.flatten()), c=leg['solarradiation'](Dists, Times).flatten(), cmap='inferno')
 
 
         # test_pt = (10000, datetime(2022, 8, 2, 12, 30).timestamp())

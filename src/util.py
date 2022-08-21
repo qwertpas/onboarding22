@@ -2,6 +2,7 @@
 from datetime import datetime
 import os
 import numpy as np
+from numpy import sin, cos, pi
 import math
 
 dir = os.path.dirname(__file__)
@@ -40,6 +41,28 @@ def latlong_dist(origin, destination):
     d = radius * c
 
     return d
+
+def solar_altitude_angle(time_obj:datetime, latitude, longitude, tz_offset):
+    day_of_year = time_obj.tm_yday
+    Latitude = latitude * (2 * np.pi / 360)
+
+    local_solar_time_meridian = 15*tz_offset
+
+    B = (day_of_year - 81)*360./365. * (2 * np.pi / 360.)
+    E = 9.87*sin(2*B) - 7.53*cos(B) - 1.58*sin(B)
+    time_correction_factor = 4 * \
+        (longitude - local_solar_time_meridian) + E  # in minutes
+    local_solar_time = time_obj.tm_hour + \
+        (time_obj.tm_min+time_correction_factor)/60.
+
+    Solar_Hour_Angle = (12 - local_solar_time) * 15 * (2 * np.pi / 360)
+    Solar_Declination = (-23.45 * cos((day_of_year+10)
+                                      * 2*pi/365)) * (2 * np.pi / 360)
+
+    Solar_Altitude_Angle = np.arcsin(cos(Latitude) * cos(Solar_Declination) * cos(
+        Solar_Hour_Angle) + sin(Latitude) * sin(Solar_Declination))
+
+    return Solar_Altitude_Angle
 
 def print_dict(d, indent=0):
    for key, value in d.items():
