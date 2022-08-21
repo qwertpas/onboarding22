@@ -1,3 +1,6 @@
+from datetime import timedelta
+import time
+from tkinter import E
 import gym
 from gym import spaces
 from gym.utils.renderer import Renderer
@@ -26,7 +29,12 @@ class RaceEnv(gym.Env):
         self.total_length = route_obj.total_length
 
         self.leg_index = 0
+        self.leg_progress = 0
         self.energy = 0
+        self.time = self.legs[0]['start']
+        self.miles_earned = 0
+        self.target_speed = 0
+        self.try_loop = False
 
         self.observation_spaces= spaces.Dict({
             "dist_traveled": spaces.Box(0, self.route.total_length),
@@ -76,6 +84,93 @@ class RaceEnv(gym.Env):
         self._renderer.render_step()
 
         return observation
+
+
+    def charge(self, time_length:timedelta, tilted=True, updateTime=True):
+
+        leg = self.legs[self.leg_index]
+
+
+        end_time = self.time + time_length
+
+        #array of charging times in seconds, spaced a minute apart
+        np.arange(self.time.timestamp(), end_time.timestamp()+60, step=60) 
+
+        leg['solar'](dist, )
+
+
+        if updateTime: self.time += time_length
+
+        self.energy += solar_func(self.leg_progress, self.time) * time_length
+
+
+    def timing(self):
+
+        '''
+        Assumes the race always ends in a stage stop, and there are never 2 loops in a row.
+        '''
+        leg = self.legs[self.leg_index]
+
+        if(self.leg_progress >= leg['length']):     #leg finished
+
+            
+            if(leg['end'] == 'checkpoint'):
+
+                next_leg = self.legs[self.leg_index+1]
+
+                if(self.time < leg['close']):       #on time
+                    miles_earned += leg['length']
+
+                    if(leg['type'] == 'loop'):
+                        self.charge(timedelta(minutes=15))
+                    else:
+                        self.charge(timedelta(minutes=45))
+
+                    if(self.time < leg['close']):    #there's time left until checkpoint closes
+
+                        if(self.time < leg['open']):    #wait for checkpoint to open before moving on
+                            self.charge(leg['open'] - self.time)
+                            
+                        if(self.try_loop and (leg['type']=='loop' or next_leg['type']=='loop')):
+                            if(leg['type']=='loop'):
+                                print('do the loop again at checkpoint')
+                            else:
+                                print('do the upcoming loop at checkpoint')
+                                self.leg_index += 1
+                        else:
+                            self.charge(next_leg['start'] - self.time)
+                            print('charge until next leg')
+
+                    else:
+                        self.charge(next_leg['start'] - self.time)
+                        print('checkpoint closed, charge until next leg')
+
+                else:   #arrived at checkpoint after it closed, move onto next base leg
+                    if(next_leg['type']=='base'):
+                        self.leg_index += 1
+                        print('skipping checkpoint because arrived late')
+                    else:
+                        self.leg_index += 2     #next leg is a loop, skip it.
+                        print('skipping checkpoint and loop because arrived late')
+
+            else:   #this leg ends in a stagestop
+                is_last_leg = self.leg_index == (len(self.legs) - 1)
+
+                if(self.time < leg['close']):
+                    miles_earned += leg['length']
+                    self.charge(timedelta(minutes=15))
+
+
+
+
+
+
+                            
+                        
+
+
+
+
 
     def step(self, action):
 
