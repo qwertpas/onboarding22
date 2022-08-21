@@ -21,8 +21,10 @@ dir = os.path.dirname(__file__)
 CHARGE_START_HOUR = 7   #battery taken out of impound
 DRIVE_START_HOUR = 9    #solar starts driving
 DRIVE_STOP_HOUR = 18    #solar stops driving
-CHARGE_STOP_HOUR = 20   #battery put into impount
+CHARGE_STOP_HOUR = 20   #battery put into impound
 
+MORNING_CHARGE_HOURS = DRIVE_START_HOUR - CHARGE_START_HOUR
+EVENING_CHARGE_HOURS = CHARGE_STOP_HOUR - DRIVE_STOP_HOUR
 HOURS_NOT_CHARGING = (DRIVE_START_HOUR + 24) - DRIVE_STOP_HOUR
 
 class Route():
