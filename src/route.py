@@ -18,10 +18,12 @@ except:
 
 dir = os.path.dirname(__file__)
 
+CHARGE_START_HOUR = 7   #battery taken out of impound
+DRIVE_START_HOUR = 9    #solar starts driving
+DRIVE_STOP_HOUR = 18    #solar stops driving
+CHARGE_STOP_HOUR = 20   #battery put into impount
 
-START_HOUR = 9      #when solar starts driving
-STOP_HOUR = 18      #when solar stops driving
-
+HOURS_NOT_CHARGING = (DRIVE_START_HOUR + 24) - DRIVE_STOP_HOUR
 
 class Route():
     def __init__(self):
@@ -141,8 +143,8 @@ class Route():
 
                 num_days = leg['close'].day - leg['start'].day + 1      #number of days that the leg can span
 
-                leg['max_time'] = (leg['close'] - leg['start']).total_seconds()/3600. - (START_HOUR-STOP_HOUR+24)*(num_days-1)
-                leg['min_time'] = (leg['open'] - leg['start']).total_seconds()/3600. - (START_HOUR-STOP_HOUR+24)*(num_days-1)
+                leg['max_time'] = (leg['close'] - leg['start']).total_seconds()/3600. - HOURS_NOT_CHARGING*(num_days-1)
+                leg['min_time'] = (leg['open'] - leg['start']).total_seconds()/3600. - HOURS_NOT_CHARGING*(num_days-1)
 
                 querytime = leg['start']
 
@@ -160,8 +162,8 @@ class Route():
                         weather_vals[key].append(conditions[key])
 
 
-                    if(querytime.hour == STOP_HOUR):    #move to the start time on the next day
-                        querytime = datetime(querytime.year, querytime.month, querytime.day + 1, hour=START_HOUR)
+                    if(querytime.hour == DRIVE_STOP_HOUR):    #move to the start time on the next day
+                        querytime = datetime(querytime.year, querytime.month, querytime.day + 1, hour=DRIVE_START_HOUR)
                     else:
                         querytime = querytime + timedelta(hours=1)
 
