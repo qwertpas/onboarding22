@@ -2,5 +2,6 @@
     "name": "Brizo",
     "drag_coeff": 0.01,
     "fric_coeff": 0.1,
-    "mass": 250
+    "mass": 250,
+    "max_mph": 55
 }

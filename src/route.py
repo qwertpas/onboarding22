@@ -163,24 +163,6 @@ class Route():
                     else:
                         querytime = querytime + timedelta(hours=1)
 
-
-                
-
-
-                # df, records_used_pt = visualcrossing.get_weather_range(
-                #     latitude, longitude,
-                #     start_day=datetime(year, month, start_day),
-                #     num_days=num_days,
-                #     doPrint=False
-                # )
-                # records_used += records_used_pt
-
-                # for index, row in df.iterrows():    #iterate through each hour of forecast
-                #     weather_pts.append((dist, row['datetimeEpoch']))
-
-                #     for key in weather_vals:         #iterate through solar, wind, etc.
-                #         weather_vals[key].append(row[key]) 
-
             print("Done getting weather at points, start building interpolants")
             for key in weather_vals:
                 interp = LinearNDInterpolator(points=weather_pts, values=weather_vals[key])

@@ -3,31 +3,39 @@ from gym import spaces
 from gym.utils.renderer import Renderer
 import pygame
 import numpy as np
+from numpy import sin, cos
 import json
+from route import Route
 from util import *
 
+dir = os.path.dirname(__file__)
 
 class RaceEnv(gym.Env):
-    metadata = {"render_modes": ["human", "rgb_array", "single_rgb_array"], "render_fps": 4}
+    metadata = {
+        "render_modes": ["human", "rgb_array", "single_rgb_array"], 
+        "render_fps": 4
+    }
 
-    def __init__(self, render_mode="human", car="brizo", race="raceA"):
+    def __init__(self, render_mode="human", car="brizo_22fsgp", route="ind-gra_2022,7,9-10_10km"):
 
-        with open(f"./cars/{car}.json", 'r') as props_json:
+        with open(f"{dir}/cars/{car}.json", 'r') as props_json:
             self.car_props = json.load(props_json)
+        
+        route_obj = Route.open(route)
+        self.legs = route_obj.leg_list
+        self.total_length = route_obj.total_length
 
-        with open(f"./routes/{car}.json", 'r') as race_json:
-            self.car_props = json.load(race_json)
-
-        #weather files as .npy? (2x 3d data because of solar and wind at each dist and time)
+        self.leg_index = 0
+        self.energy = 0
 
         self.observation_spaces= spaces.Dict({
-            "km": spaces.Box(0, self.race['total_km']),
-            "slopes_rad": spaces.Box(-10, 10)
+            "dist_traveled": spaces.Box(0, self.route.total_length),
+            "slope": spaces.Box(-10, 10)
         })
 
         #action is setting the target speed and choosing whether to try loops
         self.action_space = spaces.Dict({
-            "target_m/s": spaces.Box(0, mpersec(self.car_props['max_mph'])),
+            "target_speed": spaces.Box(0, mpersec2mph(self.car_props['max_mph'])),
             "try_loop": spaces.Discrete(2),
         })
 
@@ -46,12 +54,13 @@ class RaceEnv(gym.Env):
             "target": self._target_location,
         }
 
-    def _get_info(self):
-        return None
-
-    def reset(self, seed=None, return_info=False, options=None):
+    def reset(self, energy_budget=5400):
         # We need the following line to seed self.np_random
-        super().reset(seed=seed)
+        super().reset()
+
+        self.leg_index = 0
+        self.time = self.legs[0]['start']
+        self.energy = 0
 
         # Choose the agent's location uniformly at random
         self._agent_location = self.np_random.integers(0, self.size, size=2, dtype=int)
@@ -62,23 +71,33 @@ class RaceEnv(gym.Env):
             self._target_location = self.np_random.integers(0, self.size, size=2, dtype=int)
 
         observation = self._get_obs()
-        info = self._get_info()
 
         self._renderer.reset()
         self._renderer.render_step()
 
-        return (observation, info) if return_info else observation
+        return observation
 
     def step(self, action):
-        # Map the action (element of {0,1,2,3}) to the direction we walk in
-        direction = self._action_to_direction[action]
-        # We use `np.clip` to make sure we don't leave the grid
-        self._agent_location = np.clip(
-            self._agent_location + direction, 0, self.size - 1
-        )
-        # An episode is done iff the agent has reached the target
+
+        
+        action['target_m/s']
+
+        power_ff = v/K_m * (K_d*(v - w)^2) + K_f + K_g*sin(slope)
+        accel = K_m * power_ext / v
+
+        power_ext = accel * v / K_m
+
+        power_total = power_ff + power_ext
+
+        energy -= power_total
+
+        
+
+
         done = np.array_equal(self._agent_location, self._target_location)
+
         reward = 1 if done else 0  # Binary sparse rewards
+
         observation = self._get_obs()
         info = self._get_info()
 
