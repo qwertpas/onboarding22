@@ -19,7 +19,7 @@ class RaceEnv(gym.Env):
         "render_fps": 4
     }
 
-    def __init__(self, render_mode="human", car="brizo_22fsgp", route="ind-gra_2022,7,9-10_10km"):
+    def __init__(self, render_mode="human", car="brizo_22fsgp", route="ind-gra_2022,7,9-10_10km_ends"):
 
         with open(f"{dir}/cars/{car}.json", 'r') as props_json:
             self.car_props = json.load(props_json)
@@ -104,7 +104,7 @@ class RaceEnv(gym.Env):
             self.leg_index += 1
 
 
-    def timing(self):
+    def process_leg_finish(self):
 
         '''
         An absolute mess of logic that processes loops, holdtimes, charging hours.
@@ -112,94 +112,92 @@ class RaceEnv(gym.Env):
         '''
         leg = self.legs[self.leg_index]
 
-        if(self.leg_progress >= leg['length']):     #leg finished
+        if(self.time < leg['close']): self.miles_earned += leg['length'] #earn miles if completed on time
 
-            if(self.time < leg['close']): miles_earned += leg['length'] #earn miles if completed on time
+        is_last_leg = self.leg_index == (len(self.legs) - 1)
+        if(is_last_leg and leg['type']=='base'):
+            self.done = True
+            return
 
-            is_last_leg = self.leg_index == (len(self.legs) - 1)
-            if(is_last_leg and leg['type']=='base'):
-                self.done = True
+        holdtime = timedelta(minutes=15) if (leg['type']=='loop') else timedelta(minutes=45)
+
+        if(self.time < leg['open']):    #if arrive too early, wait for checkpoint/stagestop to open
+            self.charge(leg['open'] - self.time)
+
+        if(leg['end'] == 'checkpoint'):
+
+            self.charge(min(leg['close'] - self.time, holdtime)) #stay at checkpoint/stagestop for the required holdtime, or it closes
+
+            next_leg = self.legs[self.leg_index+1] #ended at a checkpoint not stagestop, so there must be another leg
+
+            if(self.time < leg['close']): #there's still time left after serving required hold time
+
+                if(self.try_loop and (leg['type']=='loop' or next_leg['type']=='loop')): #there's a loop and user wants to do it
+                    if(leg['type']=='loop'):
+                        print('redo loop')
+                        return
+                    else:
+                        print('do the upcoming loop')
+                        self.leg_index += 1
+                        return
+                else:
+                    self.charge(next_leg['start'] - self.time) #wait for release time
+                    print('move onto next base leg')
+                    self.leg_index += 1
+                    return
+
+            else: #checkpoint closed, need to move onto next base leg. To get to this point self.time is the close time.
+                if(next_leg['type']=='loop'):
+                    print('next leg is a loop, skipping to the base leg after that')
+                    self.leg_index += 2
+                    return
+                else:
+                    print('do the upcoming base leg')
+                    self.leg_index += 1
+                    return
+
+        else:                   #leg ends at a stage stop.
+                
+            if(self.time < leg['close']): #arrived before stage close.
+
+                self.charge(min(leg['close'] - self.time, holdtime)) #stay at stagestop for the required holdtime, or it closes
+
+                if(self.time < leg['close']): #stage hasn't closed yet
+
+                    if(self.try_loop and leg['type']=='loop'):
+                        print('redo loop')
+                        return
+
+                    if(is_last_leg): #for final leg to get to this point, must be a loop and try_loop==False
+                        print('completed last loop')
+                        self.charge(leg['close'] - self.time)                        #charge until stage close
+                        self.charge(timedelta(hours=EVENING_CHARGE_HOURS))    #evening charging
+                        self.done = True
+                        return
+                    
+                    #could be base route, or a loop that user doesn't want to try again.
+                    self.charge(leg['close'] - self.time)                        #charge until stage close
+                    
+                #at this point stage must be closed and there's more tomorrow
+                print('wait for next leg tomorrow')
+                self.charge(timedelta(hours=EVENING_CHARGE_HOURS))    #evening charging
+                self.time = next_leg['start'] - timedelta(MORNING_CHARGE_HOURS) #time skip to beginning of morning charging
+                self.charge(timedelta(hours=MORNING_CHARGE_HOURS))    #morning charging
+                self.leg_index += 1
                 return
 
-            holdtime = timedelta(minutes=15) if (leg['type']=='loop') else timedelta(minutes=45)
-
-            if(self.time < leg['open']):    #if arrive too early, wait for checkpoint/stagestop to open
-                self.charge(leg['open'] - self.time)
-
-            if(leg['end'] == 'checkpoint'):
-
-                self.charge(min(leg['close'] - self.time, holdtime)) #stay at checkpoint/stagestop for the required holdtime, or it closes
-
-                next_leg = self.legs[self.leg_index+1] #ended at a checkpoint not stagestop, so there must be another leg
-
-                if(self.time < leg['close']): #there's still time left after serving required hold time
-
-                    if(self.try_loop and (leg['type']=='loop' or next_leg['type']=='loop')): #there's a loop and user wants to do it
-                        if(leg['type']=='loop'):
-                            print('redo loop')
-                            return
-                        else:
-                            print('do the upcoming loop')
-                            self.leg_index += 1
-                            return
-                    else:
-                        self.charge(next_leg['start']) #wait for release time
-                        print('move onto next base leg')
-                        self.leg_index += 1
-                        return
-
-                else: #checkpoint closed, need to move onto next base leg. To get to this point self.time is the close time.
-                    if(next_leg['type']=='loop'):
-                        print('next leg is a loop, skipping to the base leg after that')
-                        self.leg_index += 2
-                        return
-                    else:
-                        print('do the upcoming base leg')
-                        self.leg_index += 1
-                        return
-
-            else:                   #leg ends at a stage stop.
-                    
-                if(self.time < leg['close']): #arrived before stage close.
-
-                    self.charge(min(leg['close'] - self.time, holdtime)) #stay at stagestop for the required holdtime, or it closes
-
-                    if(self.time < leg['close']): #stage hasn't closed yet
-
-                        if(self.try_loop and leg['type']=='loop'):
-                            print('redo loop')
-                            return
-
-                        if(is_last_leg): #for final leg to get to this point, must be a loop and try_loop==False
-                            print('completed last loop')
-                            self.charge(leg['close'] - self.time)                        #charge until stage close
-                            self.charge(timedelta(hours=EVENING_CHARGE_HOURS))    #evening charging
-                            self.done = True
-                            return
-                        
-                        #could be base route, or a loop that user doesn't want to try again.
-                        self.charge(leg['close'] - self.time)                        #charge until stage close
-                        
-                    #at this point stage must be closed and there's more tomorrow
-                    print('wait for next leg tomorrow')
-                    self.charge(timedelta(hours=EVENING_CHARGE_HOURS))    #evening charging
-                    self.time = next_leg['start'] - timedelta(MORNING_CHARGE_HOURS) #time skip to beginning of morning charging
-                    self.charge(timedelta(hours=MORNING_CHARGE_HOURS))    #morning charging
-                    self.leg_index += 1
-                    return
-
+            else:
+                if(leg['type']=='base'):
+                    print('did not make stagestop on time, considered trailered')        
+                    self.trailered = True
                 else:
-                    if(leg['type']=='base'):
-                        print('did not make stagestop on time, considered trailered')        
-                        self.trailered = True
-                    else:
-                        print('loop arrived after stage close, does not count. ')
+                    print('loop arrived after stage close, does not count. ')
 
-                    self.charge(leg['close'] - self.time + timedelta(hours=EVENING_CHARGE_HOURS))      #charge until end of evening charging
-                    self.time = next_leg['start'] - timedelta(MORNING_CHARGE_HOURS) #time skip to beginning of morning charging
-                    self.charge(timedelta(hours=MORNING_CHARGE_HOURS))    #morning charging
-                    self.leg_index += 1
-                    return
+                self.charge(leg['close'] - self.time + timedelta(hours=EVENING_CHARGE_HOURS))      #charge until end of evening charging
+                self.time = next_leg['start'] - timedelta(MORNING_CHARGE_HOURS) #time skip to beginning of morning charging
+                self.charge(timedelta(hours=MORNING_CHARGE_HOURS))    #morning charging
+                self.leg_index += 1
+                return
 
                 
 
@@ -237,7 +235,7 @@ class RaceEnv(gym.Env):
         
         reward = 1 if self.done else 0  # Binary sparse rewards
 
-        self.timing()
+        self.process_leg_finish()
 
 
         observation = self._get_obs()
