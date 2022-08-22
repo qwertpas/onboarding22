@@ -1,4 +1,4 @@
-from lib.car import Car
+from src.car import Car
 
 car = Car('cargo')
 
