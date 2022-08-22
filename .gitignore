@@ -3,5 +3,5 @@ __pycache__/
 key.txt
 .ipynb_checkpoints
 
-analysis/data
+analysis/data/*
 
