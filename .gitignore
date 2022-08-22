@@ -1,3 +1,7 @@
 .venv
 __pycache__/
 key.txt
+.ipynb_checkpoints
+
+analysis/data
+
