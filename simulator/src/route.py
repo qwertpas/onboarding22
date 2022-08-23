@@ -155,6 +155,8 @@ class Route():
                 querytime = leg['start']
 
                 while(querytime < leg['close']):
+
+                    
                     vc_conditions = visualcrossing.get_hour(
                         latitude, longitude, 
                         querytime, 
