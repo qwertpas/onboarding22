@@ -59,7 +59,7 @@ class Route():
         latitude_interp = interp1d(dists, df['latitude'].values, fill_value="extrapolate")
         slope_interp = interp1d(dists, df['slope (%)'].values, fill_value="extrapolate")
         altitude_interp = interp1d(dists, df['altitude (m)'].values, fill_value="extrapolate")
-        headings_interp = interp1d(dists, df['longitude'].values, fill_value="extrapolate")
+        headings_interp = interp1d(dists, df['course'].values, fill_value="extrapolate", kind='nearest') #use nearest because interpolating the angle wraparound at 0-360 sweeps through angles in between
 
         geo = {
             'name': name,
@@ -134,7 +134,7 @@ class Route():
             weather_pts = []
 
             #values of weather elements at weather_pts
-            weather_vals = {}
+            weather_vals = {'headwind': []}
 
             #get weather at points spaced dist_step meters apart, use tqdm loading bar
             dists = np.arange(0, leg['length']+dist_step, dist_step)
@@ -147,6 +147,7 @@ class Route():
 
                 #fill weather_pts and weather_vals
                 timestamps, wind_solars = forecast.openmeteo.get_wind_solar(latitude, longitude, leg['start'], leg['close'])
+                roaddir = leg['heading'](dist).item()
 
                 for i in range(len(timestamps)):
                     weather_pts.append((dist, timestamps[i]))
@@ -156,16 +157,15 @@ class Route():
                         else:
                             weather_vals[val_name].append(wind_solars[val_name][i])
 
-            #calculate headwind and delete used info
-            weather_vals['headwind'] = []
-            roaddir = leg['heading'](dist).item()
-            for i in range(len(weather_vals['windspeed_10m'])):
-                speed = weather_vals['windspeed_10m'][i]
-                winddir = weather_vals['winddirection_10m'][i]
-                headwind = speed * cos(radians(winddir - roaddir))
-                weather_vals['headwind'].append(headwind)
-            del weather_vals['windspeed_10m']
-            del weather_vals['winddirection_10m']
+                    speed = wind_solars['windspeed_10m'][i]
+                    winddir = wind_solars['winddirection_10m'][i]
+                    headwind = speed * cos(radians(winddir - roaddir))
+                    weather_vals['headwind'].append(headwind)
+
+                # for i in range(len(timestamps)):
+                    
+            # del weather_vals['windspeed_10m']
+            # del weather_vals['winddirection_10m']
 
             for key in weather_vals:
                 interp = LinearNDInterpolator(points=weather_pts, values=weather_vals[key])
@@ -218,14 +218,17 @@ def main():
         open =      datetime(2022, 7, 10, 9, 00),
         close =     datetime(2022, 7, 10, 18, 00),
     )
-    route.gen_weather(dist_step=5000)
-    route.save_as("ind-gra_2022,7,9-10_5km_openmeteo")
+    # route.gen_weather(dist_step=5000)
+    # route.save_as("ind-gra_2022,7,9-10_5km_openmeteo")
 
 
     new_route = Route.open("ind-gra_2022,7,9-10_5km_openmeteo")
     print(new_route.total_length)
 
     for leg in new_route.leg_list:
+
+        # if leg['name'] != 'BL. Grand Island Loop': continue
+
         print_dict(leg)
         print('\n')
 
@@ -239,8 +242,24 @@ def main():
         Dists, Times = np.mgrid[dist_min:dist_max:dist_res, time_min:time_max:time_res]
 
         plt.figure()
-        plt.title(leg['name'])
+        plt.title(f"{leg['name']} headwind")
         plt.scatter(to_dates(Times.flatten()), meters2miles(Dists.flatten()), c=leg['headwind'](Dists, Times).flatten(), cmap='inferno')
+        plt.colorbar()
+
+        plt.figure()
+        plt.title(f"{leg['name']} sun_tilt")
+        plt.scatter(to_dates(Times.flatten()), meters2miles(Dists.flatten()), c=leg['sun_tilt'](Dists, Times).flatten(), cmap='inferno')
+        plt.colorbar()
+
+        # plt.figure()
+        # plt.title(f"{leg['name']} winddir")
+        # plt.scatter(to_dates(Times.flatten()), meters2miles(Dists.flatten()), c=leg['winddirection_10m'](Dists, Times).flatten(), cmap='inferno')
+        # plt.colorbar()
+
+        # plt.figure()
+        # plt.title(f"{leg['name']} roaddir")
+        # plt.plot(meters2miles(Dists.flatten()), leg['heading'](Dists.flatten()), 'o')
+
 
     plt.show()
 

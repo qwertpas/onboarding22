@@ -58,3 +58,5 @@ def get_wind_solar(latitude, longitude, start:datetime, stop:datetime):
         del weather_vals['diffuse_radiation']
         
     return timestamps_trunc, weather_vals
+
+# print(get_wind_solar(39, -95, datetime(2022, 7, 9), datetime(2022, 7, 10)))
