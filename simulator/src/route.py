@@ -1,10 +1,11 @@
 from datetime import date, timedelta
+from math import radians
 import numpy as np
 import pandas as pd
 from scipy.interpolate import LinearNDInterpolator, interp1d
 import pickle
 import os
-import visualcrossing
+import forecast.openmeteo
 
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
@@ -109,7 +110,7 @@ class Route():
         self.leg_list.append(leg)
 
 
-    def gen_weather(self, start_leg=0, stop_leg=-1, dist_step=miles2meters(15), fakeRequest=False):
+    def gen_weather(self, start_leg=0, stop_leg=-1, dist_step=miles2meters(15)):
         '''
         Generate 
         Weather data are 2D linear interpolants. To get the irradiance at a distance d and time t: leg_list\['solarradiance'](d, t)
@@ -119,8 +120,6 @@ class Route():
             stop_leg = len(self.leg_list)
 
         print(f"\nGenerating weather for legs {start_leg} to {stop_leg-1}")
-
-        records_used = 0
 
         for i in range(start_leg, stop_leg):
             leg = self.leg_list[i]
@@ -135,57 +134,44 @@ class Route():
             weather_pts = []
 
             #values of weather elements at weather_pts
-            weather_vals = {
-                'solarradiation': [],
-                'cloudcover': [],
-                'windspeed': [],
-                'winddir': [],
-                'precip': [],
-                'temp': [],
-            }
+            weather_vals = {}
 
             #get weather at points spaced dist_step meters apart, use tqdm loading bar
             dists = np.arange(0, leg['length']+dist_step, dist_step)
             for dist in tqdm(dists):
-                print(f"Getting weather at {round(dist)} m")
 
-                latitude = leg['latitude'](dist)
-                longitude = leg['longitude'](dist)
+                latitude = leg['latitude'](dist).item()
+                longitude = leg['longitude'](dist).item()
 
-                querytime = leg['start']
+                print(f"\n Getting weather at {round(dist)}m: ({round(latitude, 5)}, {round(longitude, 5)})")
 
-                while(querytime < leg['close']):
+                #fill weather_pts and weather_vals
+                timestamps, wind_solars = forecast.openmeteo.get_wind_solar(latitude, longitude, leg['start'], leg['close'])
 
-                    
-                    vc_conditions = visualcrossing.get_hour(
-                        latitude, longitude, 
-                        querytime, 
-                        doPrint=False,
-                        fakeRequest=fakeRequest,
-                    )['currentConditions']
-                    records_used += 1
+                for i in range(len(timestamps)):
+                    weather_pts.append((dist, timestamps[i]))
+                    for val_name in wind_solars:
+                        if(val_name not in weather_vals):
+                            weather_vals[val_name] = [wind_solars[val_name][i]]
+                        else:
+                            weather_vals[val_name].append(wind_solars[val_name][i])
 
-                    weather_pts.append((dist, vc_conditions['datetimeEpoch']))
-                    for key in weather_vals:
-                        if(key in ['ghi', ]):
-                            weather_pts
-                        else: #get from visualcrossing
-                            weather_vals[key].append(vc_conditions[key])
+            #calculate headwind and delete used info
+            weather_vals['headwind'] = []
+            roaddir = leg['heading'](dist).item()
+            for i in range(len(weather_vals['windspeed_10m'])):
+                speed = weather_vals['windspeed_10m'][i]
+                winddir = weather_vals['winddirection_10m'][i]
+                headwind = speed * cos(radians(winddir - roaddir))
+                weather_vals['headwind'].append(headwind)
+            del weather_vals['windspeed_10m']
+            del weather_vals['winddirection_10m']
 
-                    if(querytime.hour == DRIVE_STOP_HOUR):    #move to the start time on the next day
-                        querytime = datetime(querytime.year, querytime.month, querytime.day + 1, hour=DRIVE_START_HOUR)
-                    else:
-                        querytime = querytime + timedelta(hours=1)
-
-            print("Done getting weather at points, start building interpolants")
             for key in weather_vals:
                 interp = LinearNDInterpolator(points=weather_pts, values=weather_vals[key])
                 leg[key] = interp #add interp to leg dict
         
-        print(f"Finished adding weather data to legs {start_leg} to {stop_leg-1}")
-        print(f"Used {records_used} records \n")
-        return records_used
-
+            print(f"Finished adding weather data to leg {leg['name']}")
 
     def save_as(self, name):
         with open(dir + '/route_data/saved_routes/' + name + '.route', "wb") as f:
@@ -232,43 +218,29 @@ def main():
         open =      datetime(2022, 7, 10, 9, 00),
         close =     datetime(2022, 7, 10, 18, 00),
     )
-    # route.gen_weather(dist_step=10000, fakeRequest=True)
-    # route.save_as("ind-gra_2022,7,9-10_10km_fixed")
+    route.gen_weather(dist_step=5000)
+    route.save_as("ind-gra_2022,7,9-10_5km_openmeteo")
 
 
-    new_route = Route.open("ind-gra_2022,7,9-10_10km_ends")
-
-    # print(len(new_route.leg_list))
-
-    # print(new_route)
+    new_route = Route.open("ind-gra_2022,7,9-10_5km_openmeteo")
     print(new_route.total_length)
-
-    # new_route.leg_list[0]['end'] = 'checkpoint'
-    # new_route.leg_list[1]['end'] = 'checkpoint'
-    # new_route.leg_list[2]['end'] = 'stagestop'
-    # new_route.leg_list[3]['end'] = 'stagestop'
-
-    # new_route.save_as('ind-gra_2022,7,9-10_10km_ends')
 
     for leg in new_route.leg_list:
         print_dict(leg)
         print('\n')
 
-        # dist_min = 0
-        # dist_max = leg['length']
-        # dist_res = 1000     #1 km
-        # time_min = leg['start'].timestamp()
-        # time_max = leg['close'].timestamp()
-        # time_res = 10*60    #30 minutes
+        dist_min = 0
+        dist_max = leg['length']
+        dist_res = 1000     #1 km
+        time_min = leg['start'].timestamp()
+        time_max = leg['close'].timestamp()
+        time_res = 10*60    #30 minutes
         
-        # Dists, Times = np.mgrid[dist_min:dist_max:dist_res, time_min:time_max:time_res]
+        Dists, Times = np.mgrid[dist_min:dist_max:dist_res, time_min:time_max:time_res]
 
-        # fig = plt.figure()
-        # plt.scatter(to_dates(Times.flatten()), meters2miles(Dists.flatten()), c=leg['solarradiation'](Dists, Times).flatten(), cmap='inferno')
-
-
-        # test_pt = (10000, datetime(2022, 8, 2, 12, 30).timestamp())
-
+        plt.figure()
+        plt.title(leg['name'])
+        plt.scatter(to_dates(Times.flatten()), meters2miles(Dists.flatten()), c=leg['headwind'](Dists, Times).flatten(), cmap='inferno')
 
     plt.show()
 
