@@ -51,9 +51,6 @@ class Route():
         if('altitude (ft)' in df.columns):
             df['altitude (m)'] = df['altitude (ft)'] * feet2meters(1)   
 
-        #convert to radians
-        df['slope (rad)'] = np.arctan(df['slope (%)'].values * 0.01)
-
         dists = df['distance (m)'].values
         longitude_interp = interp1d(dists, df['longitude'].values, fill_value="extrapolate")
         latitude_interp = interp1d(dists, df['latitude'].values, fill_value="extrapolate")
@@ -134,7 +131,8 @@ class Route():
             weather_pts = []
 
             #values of weather elements at weather_pts
-            weather_vals = {'headwind': []}
+            weather_vals = {}
+            weather_vals['headwind'] = []
 
             #get weather at points spaced dist_step meters apart, use tqdm loading bar
             dists = np.arange(0, leg['length']+dist_step, dist_step)
@@ -161,11 +159,9 @@ class Route():
                     winddir = wind_solars['winddirection_10m'][i]
                     headwind = speed * cos(radians(winddir - roaddir))
                     weather_vals['headwind'].append(headwind)
-
-                # for i in range(len(timestamps)):
                     
-            # del weather_vals['windspeed_10m']
-            # del weather_vals['winddirection_10m']
+            del weather_vals['windspeed_10m']
+            del weather_vals['winddirection_10m']
 
             for key in weather_vals:
                 interp = LinearNDInterpolator(points=weather_pts, values=weather_vals[key])
@@ -218,6 +214,7 @@ def main():
         open =      datetime(2022, 7, 10, 9, 00),
         close =     datetime(2022, 7, 10, 18, 00),
     )
+    ## UNCOMMENT BELOW TO GENERATE ROUTE FILE
     # route.gen_weather(dist_step=5000)
     # route.save_as("ind-gra_2022,7,9-10_5km_openmeteo")
 
@@ -241,24 +238,25 @@ def main():
         
         Dists, Times = np.mgrid[dist_min:dist_max:dist_res, time_min:time_max:time_res]
 
-        plt.figure()
-        plt.title(f"{leg['name']} headwind")
-        plt.scatter(to_dates(Times.flatten()), meters2miles(Dists.flatten()), c=leg['headwind'](Dists, Times).flatten(), cmap='inferno')
-        plt.colorbar()
+        # plt.figure()
+        # plt.title(f"{leg['name']} headwind")
+        # plt.scatter(to_dates(Times.flatten()), meters2miles(Dists.flatten()), c=leg['headwind'](Dists, Times).flatten(), cmap='inferno')
+        # plt.colorbar()
 
-        plt.figure()
-        plt.title(f"{leg['name']} sun_tilt")
-        plt.scatter(to_dates(Times.flatten()), meters2miles(Dists.flatten()), c=leg['sun_tilt'](Dists, Times).flatten(), cmap='inferno')
-        plt.colorbar()
+        # plt.figure()
+        # plt.title(f"{leg['name']} sun_tilt")
+        # plt.scatter(to_dates(Times.flatten()), meters2miles(Dists.flatten()), c=leg['sun_tilt'](Dists, Times).flatten(), cmap='inferno')
+        # plt.colorbar()
 
         # plt.figure()
         # plt.title(f"{leg['name']} winddir")
         # plt.scatter(to_dates(Times.flatten()), meters2miles(Dists.flatten()), c=leg['winddirection_10m'](Dists, Times).flatten(), cmap='inferno')
         # plt.colorbar()
 
-        # plt.figure()
-        # plt.title(f"{leg['name']} roaddir")
-        # plt.plot(meters2miles(Dists.flatten()), leg['heading'](Dists.flatten()), 'o')
+        plt.figure()
+        var = 'slope'
+        plt.title(f"{leg['name']} {var}")
+        plt.plot(meters2miles(Dists.flatten()), leg[var](Dists.flatten()), 'o-')
 
 
     plt.show()

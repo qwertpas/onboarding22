@@ -8,7 +8,6 @@ import numpy as np
 from numpy import sin, cos
 import json
 from route import MORNING_CHARGE_HOURS, EVENING_CHARGE_HOURS, Route
-import route
 from util import *
 
 dir = os.path.dirname(__file__)
@@ -19,7 +18,7 @@ class RaceEnv(gym.Env):
         "render_fps": 4
     }
 
-    def __init__(self, render_mode="human", car="brizo_22fsgp", route="ind-gra_2022,7,9-10_10km_ends"):
+    def __init__(self, render_mode="human", car="brizo_fsgp22", route="ind-gra_2022,7,9-10_5km_openmeteo"):
 
         with open(f"{dir}/cars/{car}.json", 'r') as props_json:
             self.car_props = json.load(props_json)
@@ -38,6 +37,8 @@ class RaceEnv(gym.Env):
         self.try_loop = False
         self.done = False
         self.trailered = False
+
+        self.timestep = 5 #5 second intervals
 
         self.observation_spaces= spaces.Dict({
             "dist_traveled": spaces.Box(0, self.total_length),
@@ -99,13 +100,8 @@ class RaceEnv(gym.Env):
 
         # self.energy += solar_func(self.leg_progress, self.time) * time_length
 
-    def start_next_base_leg(self):
-        while(not self.legs[self.leg_index]['type'] == 'base'):
-            self.leg_index += 1
-
 
     def process_leg_finish(self):
-
         '''
         An absolute mess of logic that processes loops, holdtimes, charging hours.
         Assumes the race always ends in a stage stop, and there are never 2 loops in a row.
@@ -199,49 +195,58 @@ class RaceEnv(gym.Env):
                 self.leg_index += 1
                 return
 
-                
-
-
-
-
-
-
-
-
-
-
-
-                            
-                        
-
 
 
 
 
     def step(self, action):
+        leg = self.legs[self.leg_index]
 
-        
-        # action['target_m/s']
+        a = action['target_accel']
+        v_t = action['target_speed']
+        v_0 = self.speed
+        dt = self.timestep
+        d_0 = self.leg_progress
 
-        # power_ff = v/K_m * (K_d*(v - w)^2) + K_f + K_g*sin(slope)
+        K_m = self.car_props['K_m'] #motor
+        K_d = self.car_props['K_d'] #drag
+        K_f = self.car_props['K_f'] #friction
+        K_g = self.car_props['K_g'] #gravity
+
+        if(np.abs(v_t - v_0) < 1): 
+            a = 0
+
+        v_f = v_0 + a*dt
+        d_f += 0.5 * (v_0 + v_f) * dt #trapezoidal integration is exact bc accel is constant throughout timestep
+
+        h_0 = leg['altitude'](d_0)
+
+        sinslope = (leg['altitude'](d_f) - leg['altitude'](d_0)) / (d_f - d_0)
+
+
+        w = leg['headwind'](d_0)
+
+        power_ff = v/K_m * (K_d*(v - w)^2) + K_f + K_g*sinslope #probably possible to isolate fric and grav, integrate after knowing time
         # accel = K_m * power_ext / v
 
         # power_ext = accel * v / K_m
 
-        # power_total = power_ff + power_ext
+        self.speed += accel * dt
 
-        # energy -= power_total
+        power_total = power_ff + power_ext
 
-        
-        reward = 1 if self.done else 0  # Binary sparse rewards
+        energy -= power_total
 
-        self.process_leg_finish()
+        if(self.leg_progress > leg['length']):
+            self.try_loop = action['try_loop']
+            self.process_leg_finish()
 
 
         observation = self._get_obs()
 
         # self._renderer.render_step()
 
+        reward = self.miles_earned
         return observation, reward, self.done
 
 
@@ -290,8 +295,6 @@ class RaceEnv(gym.Env):
 
 
 def main():
-    # env = GridWorldEnv()''
-
     env = RaceEnv(render_mode='human')
 
     obs = env.reset()
@@ -300,19 +303,18 @@ def main():
 
     observation, reward, done = env.step(action)
 
-
-    # while True:
-    #     # Take a random action
-    #     action = env.action_space.sample()
-    #     observation, reward, done = env.step(action)
+    while not done:
+        # Take a random action
+        action = env.action_space.sample()
+        observation, reward, done = env.step(action)
         
-    #     # Render the game
-    #     env.render()
+        # Render the game
+        env.render()
         
-    #     if done == True:
-    #         break
+        if done == True:
+            break
 
-    # env.close()
+    env.close()
 
 
 
