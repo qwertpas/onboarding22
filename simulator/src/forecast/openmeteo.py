@@ -4,7 +4,7 @@ from timezonefinder import TimezoneFinder
 
 tzfinder = TimezoneFinder()
 
-def get_openmeteo(latlong, start:datetime, stop:datetime):
+def get_wind_solar(latitude, longitude, start:datetime, stop:datetime):
 
     vars = [
         'shortwave_radiation',      #total sun for horizontal array 
@@ -15,17 +15,18 @@ def get_openmeteo(latlong, start:datetime, stop:datetime):
     ]
 
     #get timezone at coordinate so timestamps make sense
-    timezone = tzfinder.timezone_at(lat=latlong[0], lng=latlong[1])
+    timezone = tzfinder.timezone_at(lat=latitude, lng=longitude)
 
-    forecast = {}
+    timestamps_trunc = []
+    weather_vals = {}
     for var in vars:
 
         response = requests.request(
             method = "GET", 
             url = "https://api.open-meteo.com/v1/forecast?", 
             params = {
-                "latitude": latlong[0],
-                "longitude": latlong[1],
+                "latitude": latitude,
+                "longitude": longitude,
                 "hourly": var,
                 "windspeed_unit": "ms",
                 "start_date": start.strftime("%Y-%m-%d"),
@@ -44,16 +45,16 @@ def get_openmeteo(latlong, start:datetime, stop:datetime):
         while values and values is None:    #remove trailing Nones
             values[var].pop()
 
-        if('dates' not in forecast):
-            forecast['timestamps'] = timestamps[:len(values)] #truncate timestamps to match values
-        forecast[var] = values
+        if(len(timestamps_trunc) == 0):
+            timestamps_trunc = timestamps[:len(values)] #truncate timestamps to match values
+        weather_vals[var] = values
 
-    if('direct_normal_irradiance' in forecast and 'diffuse_radiation' in forecast):
-        forecast['sun_flat'] = forecast['shortwave_radiation']
-        forecast['sun_tilt'] = [sum(x) for x in zip(forecast['direct_normal_irradiance'], forecast['diffuse_radiation'])]
+    if('direct_normal_irradiance' in weather_vals and 'diffuse_radiation' in weather_vals):
+        weather_vals['sun_flat'] = weather_vals['shortwave_radiation']
+        weather_vals['sun_tilt'] = [sum(x) for x in zip(weather_vals['direct_normal_irradiance'], weather_vals['diffuse_radiation'])]
 
-        del forecast['shortwave_radiation']
-        del forecast['direct_normal_irradiance']
-        del forecast['diffuse_radiation']
+        del weather_vals['shortwave_radiation']
+        del weather_vals['direct_normal_irradiance']
+        del weather_vals['diffuse_radiation']
         
-    return forecast
+    return timestamps_trunc, weather_vals
