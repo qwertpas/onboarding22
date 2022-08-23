@@ -12,7 +12,7 @@ with open(dir + '/key.txt', 'r') as keyfile:
     split = keyfile.read().split('\n')
     key = split[2]  # visual crossing key (free version allows 1000 records a day)
 
-def get_weather_hour(latitude, longitude, time: datetime, doPrint=False, fakeRequest=False):
+def get_hour(latitude, longitude, time: datetime, doPrint=False, fakeRequest=False):
     '''
     Gets solar, cloud, wind, precip, and temp from VisualCrossing for a particular hour, using 1 record cost.
     Set fakeRequest to True to not make a request and return a dict of all 0, useful for testing how many records 
@@ -30,22 +30,20 @@ def get_weather_hour(latitude, longitude, time: datetime, doPrint=False, fakeReq
     if(doPrint): print(requests_text)
 
     if not fakeRequest:
-        return requests.get(requests_text).json()
+        return requests.get(requests_text).json()['currentConditions']
     else:
         return {
-            'currentConditions':{
-                'datetimeEpoch': np.random.randint(0, 10),
-                'solarradiation': np.random.random(),
-                'cloudcover': np.random.random(),
-                'windspeed': np.random.random(),
-                'winddir': np.random.random(),
-                'precip': np.random.random(),
-                'temp': np.random.random(),
-            }
+            'datetimeEpoch': np.random.randint(0, 10),
+            'solarradiation': np.random.random(),
+            'cloudcover': np.random.random(),
+            'windspeed': np.random.random(),
+            'winddir': np.random.random(),
+            'precip': np.random.random(),
+            'temp': np.random.random(),
         }
 
 
-def get_weather_range(latitude, longitude, start_day: datetime, start_hour=7, end_hour=20, num_days=1, save=None, doPrint=False, fakeRequest=False):
+def get_range(latitude, longitude, start_day: datetime, start_hour=7, end_hour=20, num_days=1, save=None, doPrint=False, fakeRequest=False):
     '''
     Gets solar, cloud, wind, precip, and temp from VisualCrossing in the time range, for multiple days. 
     The number of record costs used is the total number of forecasted hours. Optionally save as csv.
@@ -74,7 +72,7 @@ def get_weather_range(latitude, longitude, start_day: datetime, start_hour=7, en
 
         for hour in range(start_hour, end_hour + 1):
 
-            conditions = get_weather_hour(latitude, longitude, forecast_day + timedelta(hours=hour), doPrint=doPrint, fakeRequest=fakeRequest)['currentConditions']
+            conditions = get_hour(latitude, longitude, forecast_day + timedelta(hours=hour), doPrint=doPrint, fakeRequest=fakeRequest)
             records_used += 1
 
             for key in weather_dict:
@@ -88,3 +86,6 @@ def get_weather_range(latitude, longitude, start_day: datetime, start_hour=7, en
         weather_df.to_csv(save, index=False)
             
     return weather_df, records_used
+
+
+print(get_hour(39, -95, datetime.now()))
