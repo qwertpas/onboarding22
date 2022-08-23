@@ -82,9 +82,15 @@ class Route():
         '''
         assert type=='base' or type=='loop'
         assert end=='checkpoint' or end=='stagestop'
+
         geo = Route.get_geography(csv_path)
         self.total_length += geo['length']
-        self.leg_list.append({
+
+        num_days = close.day - start.day + 1      #number of days that the leg can span
+        max_time = (close - start).total_seconds()/3600. - HOURS_NOT_CHARGING*(num_days-1)
+        min_time = (open - start).total_seconds()/3600. - HOURS_NOT_CHARGING*(num_days-1)
+
+        leg = ({
             'name': geo['name'],
             'length': geo['length'],
             'type': type,
@@ -92,12 +98,15 @@ class Route():
             'start': start,
             'open': open,
             'close': close,
+            'max_time': max_time,
+            'min_time': min_time,
             'longitude': geo['longitude'],
             'latitude': geo['latitude'],
             'slope': geo['slope'],
             'altitude': geo['altitude'],
             'heading': geo['heading'],
         })
+        self.leg_list.append(leg)
 
 
     def gen_weather(self, start_leg=0, stop_leg=-1, dist_step=miles2meters(15), fakeRequest=False):
@@ -143,15 +152,10 @@ class Route():
                 latitude = leg['latitude'](dist)
                 longitude = leg['longitude'](dist)
 
-                num_days = leg['close'].day - leg['start'].day + 1      #number of days that the leg can span
-
-                leg['max_time'] = (leg['close'] - leg['start']).total_seconds()/3600. - HOURS_NOT_CHARGING*(num_days-1)
-                leg['min_time'] = (leg['open'] - leg['start']).total_seconds()/3600. - HOURS_NOT_CHARGING*(num_days-1)
-
                 querytime = leg['start']
 
                 while(querytime < leg['close']):
-                    conditions = visualcrossing.get_weather_hour(
+                    vc_conditions = visualcrossing.get_hour(
                         latitude, longitude, 
                         querytime, 
                         doPrint=False,
@@ -159,10 +163,12 @@ class Route():
                     )['currentConditions']
                     records_used += 1
 
-                    weather_pts.append((dist, conditions['datetimeEpoch']))
+                    weather_pts.append((dist, vc_conditions['datetimeEpoch']))
                     for key in weather_vals:
-                        weather_vals[key].append(conditions[key])
-
+                        if(key in ['ghi', ]):
+                            weather_pts
+                        else: #get from visualcrossing
+                            weather_vals[key].append(vc_conditions[key])
 
                     if(querytime.hour == DRIVE_STOP_HOUR):    #move to the start time on the next day
                         querytime = datetime(querytime.year, querytime.month, querytime.day + 1, hour=DRIVE_START_HOUR)
