@@ -63,21 +63,24 @@ def get_geography(csv_path:str):
 
 def parse_steps(csv:str, keywords = ['SL ', 'Stop Sign', 'TURN']):
         '''
-        Get an array of distances(m) where there the car must stop, and a lambda with input dist(m) and output speedlimit (m/s)
+        Get an array of distances(m) where there the car must stop, and a lambda with input dist(m) and output speedlimit (m/s).
+        Use bisect_left to get speed limit at particular distance:
+        speedlimit = limits[bisect_left(dists, dist)-1]
         '''
         df = pd.read_csv(csv, skiprows=2) #first two rows of csv exported from Excel is weird
 
         #magic that gets all the rows that contain the keywords
         stop_steps = df[df.stack().str.contains('|'.join(keywords)).groupby(level=0).any()]
-        stop_dists = stop_steps['Trip'].to_numpy() * miles2meters(1)
+        stop_dists = stop_steps['Trip'].to_numpy() * miles2meters()
 
         speedlimits = df[['Trip', 'Spd']].dropna(subset='Spd')
+        
+        limit_dists =  speedlimits['Trip'].to_numpy() * miles2meters()
+        limit_speeds = speedlimits['Spd'].to_numpy() * mph2mpersec()
 
-        limit_dists = speedlimits['Trip'].to_numpy() * miles2meters(1)
-        limit_speeds = speedlimits['Spd'].to_numpy() * miles2meters(1) / 3600.
-
-        # use bisect_left to get speed limit at particular distance:
-        # speedlimit = lambda dist: limits[bisect_left(dists, dist)-1]
+        if limit_dists[0] != 0:
+            limit_dists = np.insert(limit_dists, 0, 0., axis=0)
+            limit_speeds = np.insert(limit_speeds, 0, limit_speeds[0], axis=0)
 
         return stop_dists, (limit_dists, limit_speeds)
 
