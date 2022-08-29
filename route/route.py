@@ -1,19 +1,18 @@
-from datetime import date, timedelta
 from math import radians
 import numpy as np
 import pandas as pd
 from scipy.interpolate import LinearNDInterpolator, interp1d
 import pickle
 import os
-import forecast.openmeteo
+
+# import forecast.openmeteo
+# import forecast.openmeteo
 
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
-from matplotlib import cm
 
 from tqdm import tqdm
 try:
-    from .util import *     #when route.py is being imported elsewhere
+    from ..util import *     #when route.py is being imported elsewhere
 except:
     from util import *      #when route.py is being run directly
 
@@ -190,7 +189,7 @@ def main():
     route.add_leg(
         type =      'base',
         end =       'checkpoint',
-        csv_path =  dir + '/route_data/gps/asc2022/stage1_ckpt1.csv', 
+        csv_path =  dir + '/route_data/asc2022/gps/stage1_ckpt1.csv', 
         start =     datetime(2022, 7, 9, 9, 00),
         open =      datetime(2022, 7, 9, 11, 15),
         close =     datetime(2022, 7, 9, 13, 45),
@@ -198,7 +197,7 @@ def main():
     route.add_leg(
         type =      'loop',
         end =       'checkpoint',
-        csv_path =  dir + '/route_data/gps/asc2022/stage1_ckpt1_loop.csv', 
+        csv_path =  dir + '/route_data/asc2022/gps/stage1_ckpt1_loop.csv', 
         start =     datetime(2022, 7, 9, 12, 00),   #add 45min to ckpt open for hold time
         open =      datetime(2022, 7, 9, 11, 15),
         close =     datetime(2022, 7, 9, 14, 00),
@@ -206,7 +205,7 @@ def main():
     route.add_leg(
         type =      'base',
         end =       'stagestop',
-        csv_path =  dir + '/route_data/gps/asc2022/stage1_ckpt2.csv', 
+        csv_path =  dir + '/route_data/asc2022/gps/stage1_ckpt2.csv', 
         start =     datetime(2022, 7, 9, 13, 45),   #ckpt1 earliest release time
         open =      datetime(2022, 7, 10, 9, 00),
         close =     datetime(2022, 7, 10, 18, 00),
@@ -214,7 +213,7 @@ def main():
     route.add_leg(
         type =      'loop',
         end =       'stagestop',
-        csv_path =  dir + '/route_data/gps/asc2022/stage1_ckpt2_loop.csv', 
+        csv_path =  dir + '/route_data/asc2022/gps/stage1_ckpt2_loop.csv', 
         start =     datetime(2022, 7, 10, 9, 45),   #add 45min to stage open for hold time
         open =      datetime(2022, 7, 10, 9, 00),
         close =     datetime(2022, 7, 10, 18, 00),
@@ -264,7 +263,7 @@ def main():
         plt.plot(meters2miles(Dists.flatten()), leg[var](Dists.flatten()), 'o-')
 
 
-    plt.show()
+    # plt.show()
 
 if __name__ == "__main__":
     main()
