@@ -1,9 +1,11 @@
 
+from bisect import bisect_left
 from datetime import datetime
 import os
 import numpy as np
 from numpy import sin, cos, pi
 import math
+import pandas as pd
 
 dir = os.path.dirname(__file__)
 
@@ -73,5 +75,25 @@ def print_dict(d, indent=0):
             print('\t' * (indent+1) + repr(value))
 
 
+def parse_steps(csv:str, keywords = ['SL ', 'Stop Sign', 'TURN']):
+    '''
+    Get an array of distances(m) where there the car must stop, and a lambda with input dist(m) and output speedlimit (m/s)
+    '''
+    df = pd.read_csv(csv, skiprows=2) #first two rows of csv exported from Excel is weird
+
+    #magic that gets all the rows that contain the keywords
+    stop_steps = df[df.stack().str.contains('|'.join(keywords)).groupby(level=0).any()]
+    stop_dists = stop_steps['Trip'].to_numpy() * miles2meters(1)
+
+    speedlimits = df[['Trip', 'Spd']].dropna(subset='Spd')
+
+    dists = speedlimits['Trip'].to_numpy()
+    limits = speedlimits['Spd'].to_numpy()
+
+    speedlimit = lambda dist: limits[bisect_left(dists, dist)-1]
+
+    return stop_dists, speedlimit
+
+
 # if __name__ == "__main__":
-    # get_weather_days(44.9691314, -93.530618, datetime(2022, 8, 19), start_hour=7, end_hour=20, num_days=2, save='wayzata_8-19')
+#     get_weather_days(44.9691314, -93.530618, datetime(2022, 8, 19), start_hour=7, end_hour=20, num_days=2, save='wayzata_8-19')

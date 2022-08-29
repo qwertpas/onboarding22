@@ -39,6 +39,7 @@ class RaceEnv(gym.Env):
         self.trailered = False
 
         self.timestep = 5 #5 second intervals
+        self.speed_tolerance = 0.447  #1mph
 
         self.observation_spaces= spaces.Dict({
             "dist_traveled": spaces.Box(0, self.total_length),
@@ -212,36 +213,39 @@ class RaceEnv(gym.Env):
         K_d = self.car_props['K_d'] #drag
         K_f = self.car_props['K_f'] #friction
         K_g = self.car_props['K_g'] #gravity
-
-        if(np.abs(v_t - v_0) < 1): 
-            a = 0
-
-        v_f = v_0 + a*dt
-        d_f += 0.5 * (v_0 + v_f) * dt #trapezoidal integration is exact bc accel is constant throughout timestep
-
-        h_0 = leg['altitude'](d_0)
-
-        sinslope = (leg['altitude'](d_f) - leg['altitude'](d_0)) / (d_f - d_0)
-
+        P_max = self.car_props['P_max'] #max motor power
+        v_max = mph2mpersec(self.car_props['max_mph']) 
 
         w = leg['headwind'](d_0)
+        d_f = d_0 + v_t*dt      #estimate dist at end of step for now by assuming actualspeed=targetspeed
+        sinslope = (leg['altitude'](d_f) - leg['altitude'](d_0)) / (d_f - d_0)
 
-        power_ff = v/K_m * (K_d*(v - w)^2) + K_f + K_g*sinslope #probably possible to isolate fric and grav, integrate after knowing time
-        # accel = K_m * power_ext / v
+        if(np.abs(v_t - v_0) < 0.5):    #speed within target, no accel needed
+            a = 0
+        elif(v_0 > v_max):              #at max speed, can only decelerate
+            a = min(a, 0)
+        else:                           #limit accel based on max power
+            a_max = 1/v_0 * (P_max*K_m - v_avg*K_d*(v_0-w)**2 - K_m*K_f - K_m*K_g*sinslope)
+            a = min(a, a_max)
 
-        # power_ext = accel * v / K_m
+        v_f = v_0 + a*dt                #calculate v_f for real with updated accel
+        v_avg = 0.5 * (v_0 + v_f)
+        d_f += v_avg * dt               #trapezoidal integration is exact bc accel is constant throughout timestep
 
-        self.speed += accel * dt
 
-        power_total = power_ff + power_ext
+        power_ff = v_avg/K_m * (K_d*(v_avg - w)**2) + K_f + K_g*sinslope #probably possible to isolate fric, integrate after knowing time
+        power_ext = a * v_avg / K_m
+        self.motor_power = power_ff + power_ext
 
-        energy -= power_total
+        self.energy -= self.motor_power
 
-        if(self.leg_progress > leg['length']):
+        if(d_f > leg['length']):
             self.try_loop = action['try_loop']
             self.process_leg_finish()
 
 
+        self.leg_progress = d_f
+        self.speed = v_f
         observation = self._get_obs()
 
         # self._renderer.render_step()

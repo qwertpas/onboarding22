@@ -26,7 +26,7 @@ CHARGE_STOP_HOUR = 20   #battery put into impound
 
 MORNING_CHARGE_HOURS = DRIVE_START_HOUR - CHARGE_START_HOUR
 EVENING_CHARGE_HOURS = CHARGE_STOP_HOUR - DRIVE_STOP_HOUR
-HOURS_NOT_CHARGING = (DRIVE_START_HOUR + 24) - DRIVE_STOP_HOUR
+HOURS_NOT_DRIVING = (DRIVE_START_HOUR + 24) - DRIVE_STOP_HOUR
 
 class Route():
     def __init__(self):
@@ -70,6 +70,7 @@ class Route():
         return geo
 
 
+
     def add_leg(self, type:str, end:str, csv_path:str, start:datetime, open:datetime, close:datetime): 
         '''
             Add a dict to the route containing info of a base leg or loop. 
@@ -84,9 +85,11 @@ class Route():
         geo = Route.get_geography(csv_path)
         self.total_length += geo['length']
 
+        stop_dists, speedlimit = parse_steps(csv=csv_path)
+
         num_days = close.day - start.day + 1      #number of days that the leg can span
-        max_time = (close - start).total_seconds()/3600. - HOURS_NOT_CHARGING*(num_days-1)
-        min_time = (open - start).total_seconds()/3600. - HOURS_NOT_CHARGING*(num_days-1)
+        max_time = (close - start).total_seconds()/3600. - HOURS_NOT_DRIVING*(num_days-1)
+        min_time = (open - start).total_seconds()/3600. - HOURS_NOT_DRIVING*(num_days-1)
 
         leg = ({
             'name': geo['name'],
@@ -103,6 +106,8 @@ class Route():
             'slope': geo['slope'],
             'altitude': geo['altitude'],
             'heading': geo['heading'],
+            'stop_dists': stop_dists,
+            'speedlimit': speedlimit,
         })
         self.leg_list.append(leg)
 
@@ -216,7 +221,7 @@ def main():
     )
     ## UNCOMMENT BELOW TO GENERATE ROUTE FILE
     # route.gen_weather(dist_step=5000)
-    # route.save_as("ind-gra_2022,7,9-10_5km_openmeteo")
+    route.save_as("ind-gra_2022,7,9-10_5km_openmeteo")
 
 
     new_route = Route.open("ind-gra_2022,7,9-10_5km_openmeteo")
@@ -254,7 +259,7 @@ def main():
         # plt.colorbar()
 
         plt.figure()
-        var = 'slope'
+        var = 'altitude'
         plt.title(f"{leg['name']} {var}")
         plt.plot(meters2miles(Dists.flatten()), leg[var](Dists.flatten()), 'o-')
 
