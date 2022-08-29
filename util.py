@@ -11,22 +11,22 @@ dir = os.path.dirname(__file__)
 
 to_dates = np.vectorize(datetime.fromtimestamp)
 
-def meters2miles(meters):
+def meters2miles(meters=1):
     return meters * 0.0006214
 
-def miles2meters(miles):
+def miles2meters(miles=1):
     return miles * 1609.34
 
-def feet2meters(feet):
+def feet2meters(feet=1):
     return feet * 0.3048
 
-def meters2feet(meters):
+def meters2feet(meters=1):
     return meters * 3.28
 
-def mph2mpersec(mph):
+def mph2mpersec(mph=1):
     return mph * 0.44704
 
-def mpersec2mph(mpersec):
+def mpersec2mph(mpersec=1):
     return mpersec * 2.23694
 
 def latlong_dist(origin, destination):
@@ -74,26 +74,23 @@ def print_dict(d, indent=0):
         else:
             print('\t' * (indent+1) + repr(value))
 
-
-def parse_steps(csv:str, keywords = ['SL ', 'Stop Sign', 'TURN']):
+def ffill(x_0:list, y_0:list, epsilon=1e-6):
     '''
-    Get an array of distances(m) where there the car must stop, and a lambda with input dist(m) and output speedlimit (m/s)
+    Forward fill: Add points to a pair of lists so that the y value keeps constant until changed, creating steps instead of allowing graphs to interpolate
     '''
-    df = pd.read_csv(csv, skiprows=2) #first two rows of csv exported from Excel is weird
-
-    #magic that gets all the rows that contain the keywords
-    stop_steps = df[df.stack().str.contains('|'.join(keywords)).groupby(level=0).any()]
-    stop_dists = stop_steps['Trip'].to_numpy() * miles2meters(1)
-
-    speedlimits = df[['Trip', 'Spd']].dropna(subset='Spd')
-
-    dists = speedlimits['Trip'].to_numpy()
-    limits = speedlimits['Spd'].to_numpy()
-
-    speedlimit = lambda dist: limits[bisect_left(dists, dist)-1]
-
-    return stop_dists, speedlimit
+    x = np.array(x_0).tolist()
+    y = np.array(y_0).tolist()
+    assert len(x) == len(y)
+    i = 1
+    while i < len(x):
+        x.insert(i, x[i]-epsilon)
+        y.insert(i, y[i-1])
+        i += 2
+    return np.array(x), np.array(y)
 
 
-# if __name__ == "__main__":
-#     get_weather_days(44.9691314, -93.530618, datetime(2022, 8, 19), start_hour=7, end_hour=20, num_days=2, save='wayzata_8-19')
+
+#testing
+if __name__ == "__main__":
+    x = ffill([0, 1, 2, 3, 4], [0.1, 0.2, 0.3, 0.4, 0.5])
+    print(x)

@@ -4,19 +4,18 @@ import pandas as pd
 from scipy.interpolate import LinearNDInterpolator, interp1d
 import pickle
 import os
-
-# import forecast.openmeteo
-# import forecast.openmeteo
-
+from datetime import datetime
 import matplotlib.pyplot as plt
-
 from tqdm import tqdm
-try:
-    from ..util import *     #when route.py is being imported elsewhere
-except:
-    from util import *      #when route.py is being run directly
 
+import sys
 dir = os.path.dirname(__file__)
+sys.path.insert(0, dir+'/..')   #allow imports from parent directory "onboarding22"
+
+from util import *
+import forecast.openmeteo
+
+
 
 CHARGE_START_HOUR = 7   #battery taken out of impound
 DRIVE_START_HOUR = 9    #solar starts driving
@@ -27,50 +26,68 @@ MORNING_CHARGE_HOURS = DRIVE_START_HOUR - CHARGE_START_HOUR
 EVENING_CHARGE_HOURS = CHARGE_STOP_HOUR - DRIVE_STOP_HOUR
 HOURS_NOT_DRIVING = (DRIVE_START_HOUR + 24) - DRIVE_STOP_HOUR
 
+def get_geography(csv_path:str):
+    df = pd.read_csv(csv_path)
+
+    name = df['name'].iat[0] #get name from first row
+
+    df.fillna(method='bfill', inplace=True) #fill leading NaNs with the first valid value
+
+    #convert distance to meters
+    if('distance (mi)' in df.columns):
+        df['distance (m)'] = df['distance (mi)'] * miles2meters(1)
+    else:
+        assert 'distance (km)' in df.columns
+        df['distance (m)'] = df['distance (km)'] * 1000
+
+    if('altitude (ft)' in df.columns):
+        df['altitude (m)'] = df['altitude (ft)'] * feet2meters(1)   
+
+    dists = df['distance (m)'].values
+    longitude_interp = interp1d(dists, df['longitude'].values, fill_value="extrapolate")
+    latitude_interp = interp1d(dists, df['latitude'].values, fill_value="extrapolate")
+    slope_interp = interp1d(dists, df['slope (%)'].values, fill_value="extrapolate")
+    altitude_interp = interp1d(dists, df['altitude (m)'].values, fill_value="extrapolate")
+    headings_interp = interp1d(dists, df['course'].values, fill_value="extrapolate", kind='nearest') #use nearest because interpolating the angle wraparound at 0-360 sweeps through angles in between
+
+    geo = {
+        'name': name,
+        'length': dists[-1],
+        'longitude': longitude_interp,
+        'latitude': latitude_interp,
+        'slope': slope_interp,
+        'altitude': altitude_interp,
+        'heading': headings_interp,
+    }
+    return geo
+
+def parse_steps(csv:str, keywords = ['SL ', 'Stop Sign', 'TURN']):
+        '''
+        Get an array of distances(m) where there the car must stop, and a lambda with input dist(m) and output speedlimit (m/s)
+        '''
+        df = pd.read_csv(csv, skiprows=2) #first two rows of csv exported from Excel is weird
+
+        #magic that gets all the rows that contain the keywords
+        stop_steps = df[df.stack().str.contains('|'.join(keywords)).groupby(level=0).any()]
+        stop_dists = stop_steps['Trip'].to_numpy() * miles2meters(1)
+
+        speedlimits = df[['Trip', 'Spd']].dropna(subset='Spd')
+
+        limit_dists = speedlimits['Trip'].to_numpy() * miles2meters(1)
+        limit_speeds = speedlimits['Spd'].to_numpy() * miles2meters(1) / 3600.
+
+        # use bisect_left to get speed limit at particular distance:
+        # speedlimit = lambda dist: limits[bisect_left(dists, dist)-1]
+
+        return stop_dists, (limit_dists, limit_speeds)
+
 class Route():
     def __init__(self):
         #list of dictionaries, each representing a leg
         self.leg_list = []
         self.total_length = 0
 
-    def get_geography(csv_path:str):
-        df = pd.read_csv(csv_path)
-
-        name = df['name'].iat[0] #get name from first row
-
-        df.fillna(method='bfill', inplace=True) #fill leading NaNs with the first valid value
-
-        #convert distance to meters
-        if('distance (mi)' in df.columns):
-            df['distance (m)'] = df['distance (mi)'] * miles2meters(1)
-        else:
-            assert 'distance (km)' in df.columns
-            df['distance (m)'] = df['distance (km)'] * 1000
-
-        if('altitude (ft)' in df.columns):
-            df['altitude (m)'] = df['altitude (ft)'] * feet2meters(1)   
-
-        dists = df['distance (m)'].values
-        longitude_interp = interp1d(dists, df['longitude'].values, fill_value="extrapolate")
-        latitude_interp = interp1d(dists, df['latitude'].values, fill_value="extrapolate")
-        slope_interp = interp1d(dists, df['slope (%)'].values, fill_value="extrapolate")
-        altitude_interp = interp1d(dists, df['altitude (m)'].values, fill_value="extrapolate")
-        headings_interp = interp1d(dists, df['course'].values, fill_value="extrapolate", kind='nearest') #use nearest because interpolating the angle wraparound at 0-360 sweeps through angles in between
-
-        geo = {
-            'name': name,
-            'length': dists[-1],
-            'longitude': longitude_interp,
-            'latitude': latitude_interp,
-            'slope': slope_interp,
-            'altitude': altitude_interp,
-            'heading': headings_interp,
-        }
-        return geo
-
-
-
-    def add_leg(self, type:str, end:str, csv_path:str, start:datetime, open:datetime, close:datetime): 
+    def add_leg(self, type:str, end:str, gps_csv:str, steps_csv:str, start:datetime, open:datetime, close:datetime): 
         '''
             Add a dict to the route containing info of a base leg or loop. 
             Set type to 'base' or 'loop'. Set start to the first possible time that one can drive the leg,
@@ -81,10 +98,10 @@ class Route():
         assert type=='base' or type=='loop'
         assert end=='checkpoint' or end=='stagestop'
 
-        geo = Route.get_geography(csv_path)
+        geo = get_geography(gps_csv)
         self.total_length += geo['length']
 
-        stop_dists, speedlimit = parse_steps(csv=csv_path)
+        stop_dists, speedlimit = parse_steps(csv=steps_csv)
 
         num_days = close.day - start.day + 1      #number of days that the leg can span
         max_time = (close - start).total_seconds()/3600. - HOURS_NOT_DRIVING*(num_days-1)
@@ -174,11 +191,11 @@ class Route():
             print(f"Finished adding weather data to leg {leg['name']}")
 
     def save_as(self, name):
-        with open(dir + '/route_data/saved_routes/' + name + '.route', "wb") as f:
+        with open(dir + '/route/saved_routes/' + name + '.route', "wb") as f:
             pickle.dump(self, f)
 
     def open(name):
-        with open(dir + '/route_data/saved_routes/' + name + '.route', "rb") as f:
+        with open(dir + '/route/saved_routes/' + name + '.route', "rb") as f:
             return pickle.load(f)
 
 
@@ -189,7 +206,8 @@ def main():
     route.add_leg(
         type =      'base',
         end =       'checkpoint',
-        csv_path =  dir + '/route_data/asc2022/gps/stage1_ckpt1.csv', 
+        gps_csv =   dir + '/route/asc2022/gps/stage1_ckpt1.csv', 
+        steps_csv = dir + '/route/asc2022/steps/steps_stage1_ckpt1.csv',
         start =     datetime(2022, 7, 9, 9, 00),
         open =      datetime(2022, 7, 9, 11, 15),
         close =     datetime(2022, 7, 9, 13, 45),
@@ -197,7 +215,8 @@ def main():
     route.add_leg(
         type =      'loop',
         end =       'checkpoint',
-        csv_path =  dir + '/route_data/asc2022/gps/stage1_ckpt1_loop.csv', 
+        gps_csv =   dir + '/route/asc2022/gps/stage1_ckpt1_loop.csv', 
+        steps_csv = dir + '/route/asc2022/steps/steps_stage1_ckpt1_loop.csv',
         start =     datetime(2022, 7, 9, 12, 00),   #add 45min to ckpt open for hold time
         open =      datetime(2022, 7, 9, 11, 15),
         close =     datetime(2022, 7, 9, 14, 00),
@@ -205,7 +224,8 @@ def main():
     route.add_leg(
         type =      'base',
         end =       'stagestop',
-        csv_path =  dir + '/route_data/asc2022/gps/stage1_ckpt2.csv', 
+        gps_csv =   dir + '/route/asc2022/gps/stage1_ckpt2.csv', 
+        steps_csv = dir + '/route/asc2022/steps/steps_stage1_ckpt2.csv',
         start =     datetime(2022, 7, 9, 13, 45),   #ckpt1 earliest release time
         open =      datetime(2022, 7, 10, 9, 00),
         close =     datetime(2022, 7, 10, 18, 00),
@@ -213,7 +233,8 @@ def main():
     route.add_leg(
         type =      'loop',
         end =       'stagestop',
-        csv_path =  dir + '/route_data/asc2022/gps/stage1_ckpt2_loop.csv', 
+        gps_csv =   dir + '/route/asc2022/gps/stage1_ckpt2_loop.csv', 
+        steps_csv = dir + '/route/asc2022/steps/steps_stage1_ckpt2_loop.csv', 
         start =     datetime(2022, 7, 10, 9, 45),   #add 45min to stage open for hold time
         open =      datetime(2022, 7, 10, 9, 00),
         close =     datetime(2022, 7, 10, 18, 00),
@@ -241,6 +262,7 @@ def main():
         time_res = 10*60    #30 minutes
         
         Dists, Times = np.mgrid[dist_min:dist_max:dist_res, time_min:time_max:time_res]
+        dists = Dists[:,0]
 
         # plt.figure()
         # plt.title(f"{leg['name']} headwind")
@@ -257,13 +279,27 @@ def main():
         # plt.scatter(to_dates(Times.flatten()), meters2miles(Dists.flatten()), c=leg['winddirection_10m'](Dists, Times).flatten(), cmap='inferno')
         # plt.colorbar()
 
+        # plt.figure()
+        # var = 'altitude'
+        # plt.title(f"{leg['name']} {var}")
+        # plt.plot(meters2miles(Dists.flatten()), leg[var](Dists.flatten()), 'o-')
+
+
         plt.figure()
-        var = 'altitude'
-        plt.title(f"{leg['name']} {var}")
-        plt.plot(meters2miles(Dists.flatten()), leg[var](Dists.flatten()), 'o-')
+        plt.title(f"{leg['name']} speeds")
+
+        plt.vlines(leg['stop_dists']*meters2miles(), ymin=0, ymax=70, colors='red', linewidth=0.5, label='stops')
+
+        dist_pts, limit_pts = leg['speedlimit']
+        dist_pts, limit_pts = ffill(dist_pts, limit_pts)
+        plt.plot(dist_pts*meters2miles(), limit_pts*mpersec2mph(), label='limit')
+        plt.legend()
+        
 
 
-    # plt.show()
+
+
+    plt.show()
 
 if __name__ == "__main__":
     main()
