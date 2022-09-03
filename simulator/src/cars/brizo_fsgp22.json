@@ -3,5 +3,9 @@
     "drag_coeff": 0.01,
     "fric_coeff": 0.1,
     "mass": 250,
-    "max_mph": 55
+    "max_mph": 55,
+    "array_multiplier": 0.8,
+    "max_motor_output_power": 6000,
+    "max_motor_input_power": 4000,
+    "max_energy": 5400
 }
