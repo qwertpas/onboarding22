@@ -58,7 +58,7 @@ class RaceEnv(gym.Env):
 
         #action is setting the target speed and choosing whether to try loops
         self.action_space = spaces.Dict({
-            "target_speed": spaces.Box(mph2mpersec(self.car_props['min_mph']), mph2mpersec(self.car_props['max_mph'])),
+            "target_mph": spaces.Box(mph2mpersec(self.car_props['min_mph']), mph2mpersec(self.car_props['max_mph'])),
             "acceleration": spaces.Box(0, self.car_props['max_accel']),
             "deceleration": spaces.Box(self.car_props['max_decel'], 0),
             "try_loop": spaces.Discrete(2),
@@ -214,12 +214,11 @@ class RaceEnv(gym.Env):
                     return
                 else:
                     print('loop arrived after stage close, does not count. ')
-
-                self.charge(leg['close'] - self.time + timedelta(hours=EVENING_CHARGE_HOURS))      #charge until end of evening charging
-                self.time = next_leg['start'] - timedelta(MORNING_CHARGE_HOURS) #time skip to beginning of morning charging
-                self.charge(timedelta(hours=MORNING_CHARGE_HOURS))    #morning charging
-                self.leg_index += 1
-                return
+                    self.charge(leg['close'] - self.time + timedelta(hours=EVENING_CHARGE_HOURS))      #charge until end of evening charging
+                    self.time = next_leg['start'] - timedelta(MORNING_CHARGE_HOURS) #time skip to beginning of morning charging
+                    self.charge(timedelta(hours=MORNING_CHARGE_HOURS))    #morning charging
+                    self.leg_index += 1
+                    return
 
 
 
@@ -248,25 +247,24 @@ class RaceEnv(gym.Env):
 
         P_max_out = self.car_props['max_motor_output_power'] #max motor drive power (positive)
         P_max_in = self.car_props['max_motor_input_power'] #max regen power (positive)
-        v_min = mph2mpersec(self.car_props['min_mph']) 
-        v_max = mph2mpersec(self.car_props['max_mph']) 
+        min_mph = self.car_props['min_mph']
+        max_mph = self.car_props['max_mph']
 
         assert action['acceleration'] > 0, "Acceleration must be positive"
         assert action['deceleration'] < 0, "Deceleration must be negative"
-        assert action['target_speed'] > v_min and action['target_speed'] < v_max, f"Target speed must be between {round(mpersec2mph(v_min))} mph and {round(mpersec2mph(v_max))} mph"
+        assert action['target_mph'] > min_mph and action['target_mph'] < max_mph, f"Target speed must be between {min_mph} mph and {max_mph} mph"
 
         a_acc = float(action['acceleration'])
         a_dec = float(action['deceleration'])
-        v_t = float(action['target_speed'])
+        v_t = float(action['target_mph'])
 
         # SPEEDLIMIT
-        if(d_0 >= self.next_limit_dist and self.next_limit_index < len(leg['speedlimit'][0])):     #update speed limit if passed next sign
-            print(self.next_limit_index)
+        if(d_0 >= self.next_limit_dist):     #update speed limit if passed next sign
             self.limit = leg['speedlimit'][1][self.next_limit_index]
-            
-            self.next_limit_index += 1
-            # if(self.next_limit_index < len(leg['speedlimit'][0])):
-            self.next_limit_dist = leg['speedlimit'][0][self.next_limit_index]
+
+            if(self.next_limit_index+1 < len(leg['speedlimit'][0])):
+                self.next_limit_index += 1
+                self.next_limit_dist = leg['speedlimit'][0][self.next_limit_index]
 
 
         # STOPPING
@@ -288,8 +286,8 @@ class RaceEnv(gym.Env):
                 self.time += timedelta(seconds=stopping_time)
                 self.leg_progress = self.next_stop_dist
 
-                self.next_stop_index += 1
-                if(self.next_stop_index < len(leg['stop_dists'])):
+                if(self.next_stop_index+1 < len(leg['stop_dists'])):
+                    self.next_stop_index += 1
                     self.next_stop_dist = leg['stop_dists'][self.next_stop_index]  #completed the stop
 
                 observation = self._get_obs()
@@ -338,9 +336,13 @@ class RaceEnv(gym.Env):
 
 
         # CHECK IF DONE WITH CURRENT LEG
-        if(d_f > leg['length']):
+        if(d_f >= leg['length']):
+            print("end at checkpoint")
+
             self.try_loop = action['try_loop']
             self.process_leg_finish() #will update leg and self.done if needed
+        else:
+            print(d_f, leg['length'])
 
 
         # self._renderer.render_step()
@@ -407,14 +409,19 @@ def main():
 
     obs = env.reset()
 
-    action = env.action_space.sample()
+    action = {
+        "target_mph": 35,
+        "acceleration": 1,
+        "deceleration": -1,
+        "try_loop": False,
+    }
 
     observation, reward, done = env.step(action)
 
     while not done:
         # Take a random action
-        action = env.action_space.sample()
-        # print(env.miles_earned)
+        # action = env.action_space.sample()
+        # print(env.leg_progress, env.leg_index)
 
         observation, reward, done = env.step(action)
         
