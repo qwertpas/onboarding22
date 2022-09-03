@@ -33,16 +33,19 @@ class RaceEnv(gym.Env):
         self.energy = 0
         self.time = self.legs[0]['start']
         self.miles_earned = 0
-        self.target_speed = 0
         self.try_loop = False
         self.done = False
-        self.trailered = False
+
+        self.next_stop_dist = 0
+        self.next_stop_index = 0
+        self.limit = None
+        self.next_stop_dist = 0
+        self.next_limit_index = 0
 
         self.timestep = 5 #5 second intervals
-        self.speed_tolerance = 0.447  #1mph
 
         self.observation_spaces= spaces.Dict({
-            "dist_traveled": spaces.Box(0, self.total_length),
+            "dist_traveled": spaces.Box(0, float('inf')),
             "slope": spaces.Box(-10, 10)
         })
 
@@ -67,6 +70,16 @@ class RaceEnv(gym.Env):
             'energy': self.energy,
         }
 
+    def reset_leg(self):
+        self.leg_progress = 0
+        self.speed = 0
+        self.next_stop_dist = 0
+        self.next_stop_index = 0
+        self.limit = None
+        self.next_stop_dist = 0
+        self.next_limit_index = 0
+        
+
     def reset(self, energy_budget=5400):
         # We need the following line to seed self.np_random
         super().reset()
@@ -75,6 +88,7 @@ class RaceEnv(gym.Env):
         self.time = self.legs[0]['start']
         self.energy = 0
 
+        self.reset_leg()
         
         observation = self._get_obs()
         self._renderer.reset()
@@ -83,11 +97,9 @@ class RaceEnv(gym.Env):
         return observation
 
 
-    def charge(self, time_length:timedelta, tilted=True, updateTime=True):
+    def charge(self, time_length:timedelta, tilted=True):
 
         leg = self.legs[self.leg_index]
-
-
 
         end_time = self.time + time_length
 
@@ -97,7 +109,7 @@ class RaceEnv(gym.Env):
         # leg['solar'](dist, )
 
 
-        if updateTime: self.time += time_length
+        self.time += time_length
 
         # self.energy += solar_func(self.leg_progress, self.time) * time_length
 
@@ -114,6 +126,7 @@ class RaceEnv(gym.Env):
         is_last_leg = self.leg_index == (len(self.legs) - 1)
         if(is_last_leg and leg['type']=='base'):
             self.done = True
+            print("Ended on a base leg. Completed entire route!")
             return
 
         holdtime = timedelta(minutes=15) if (leg['type']=='loop') else timedelta(minutes=45)
@@ -151,6 +164,7 @@ class RaceEnv(gym.Env):
                 else:
                     print('do the upcoming base leg')
                     self.leg_index += 1
+                    self.reset_leg()
                     return
 
         else:                   #leg ends at a stage stop.
@@ -163,10 +177,12 @@ class RaceEnv(gym.Env):
 
                     if(self.try_loop and leg['type']=='loop'):
                         print('redo loop')
+                        self.charge(timedelta(minutes=15))
+                        self.reset_leg()
                         return
 
                     if(is_last_leg): #for final leg to get to this point, must be a loop and try_loop==False
-                        print('completed last loop')
+                        print('Ended on a loop, will not be attemping more. completed last loop')
                         self.charge(leg['close'] - self.time)                        #charge until stage close
                         self.charge(timedelta(hours=EVENING_CHARGE_HOURS))    #evening charging
                         self.done = True
@@ -186,7 +202,8 @@ class RaceEnv(gym.Env):
             else:
                 if(leg['type']=='base'):
                     print('did not make stagestop on time, considered trailered')        
-                    self.trailered = True
+                    self.done = True
+                    return
                 else:
                     print('loop arrived after stage close, does not count. ')
 
@@ -198,60 +215,118 @@ class RaceEnv(gym.Env):
 
 
 
+    def get_motor_power(self, accel, avg_speed, headwind, dist_change, alt_change):
+        '''
+        Motor power loss in W, positive meaning power is used
+        '''
+        K_m = self.car_props['K_m'] #motor
+        K_d = self.car_props['K_d'] #drag
+        K_f = self.car_props['K_f'] #friction
+        K_g = self.car_props['K_g'] #gravity
+
+        #can probably be made into a matrix
+        power_ff = avg_speed/K_m * (K_d*(avg_speed - headwind)**2) + K_f + K_g*(alt_change / dist_change)    #power used to keep the avg speed.
+        power_acc = accel * avg_speed / K_m                                                                 #power used to accelerate (or decelerate)
+        return power_ff + power_acc
 
 
     def step(self, action):
         leg = self.legs[self.leg_index]
 
-        a = action['target_accel']
-        v_t = action['target_speed']
         v_0 = self.speed
         dt = self.timestep
-        d_0 = self.leg_progress
+        d_0 = self.leg_progress     #meters completed of the current leg
 
         K_m = self.car_props['K_m'] #motor
         K_d = self.car_props['K_d'] #drag
         K_f = self.car_props['K_f'] #friction
         K_g = self.car_props['K_g'] #gravity
-        P_max = self.car_props['P_max'] #max motor power
+        P_max_out = self.car_props['max_motor_output_power'] #max motor drive power (positive)
+        P_max_in = self.car_props['max_motor_input_power'] #max regen power (positive)
         v_max = mph2mpersec(self.car_props['max_mph']) 
 
-        w = leg['headwind'](d_0)
+        assert action['acceleration'] > 0, "Acceleration must be positive"
+        assert action['deceleration'] < 0, "Deceleration must be negative"
+        assert action['target_speed'] > 2.24 and action['target_speed'] < v_max, f"Target speed must be between 5 mph and {mpersec2mph(v_max)} mph"
+
+        a_acc = action['acceleration']
+        a_dec = action['deceleration']
+        v_t = action['target_speed']
+
+        if(d_0 > self.next_limit_dist):     #update speed limit if passed next sign
+            self.limit = leg.speedlimit[1][self.next_limit_index]
+            self.next_limit_index += 1
+            self.next_stop_dist = leg.speedlimit[0][self.next_limit_index]
+
+        if(d_0 > self.next_stop_dist - 1000):       #check if within a reasonable stopping distance (1km)
+
+            stopping_dist = -v_0*v_0 / (2*a_dec)    #calculate distance it would take to decel to 0 at current speed
+
+            if(d_0 > self.next_stop_dist - stopping_dist):  #within distance to be able to decel to 0 at a constant decel
+                a = a_dec
+                v_avg = v_0/2.
+                w = leg['headwind'](d_0, self.time)
+                alt_change = leg['altitude'][self.next_stop_dist] - leg['altitude'][d_0]
+                stopping_time = -v_0/a
+
+                powerloss = self.get_powerloss(a, v_avg, w, stopping_dist, alt_change)
+                powergain = leg['sun_flat'](d_0, self.time) * self.car_props['array_multiplier']
+                self.energy += (powergain - powerloss) * stopping_time
+                self.energy = min(self.energy, self.car_props['max_energy'])
+
+                self.time += stopping_time
+                self.leg_progress = self.next_stop_dist
+                self.next_stop_index += 1
+                self.next_stop_dist = leg.stop_dists[self.next_stop_index]  #completed the stop
+
+                observation = self._get_obs()
+                return self._get_obs, reward, self.done
+
         d_f = d_0 + v_t*dt      #estimate dist at end of step for now by assuming actualspeed=targetspeed
         sinslope = (leg['altitude'](d_f) - leg['altitude'](d_0)) / (d_f - d_0)
 
-        if(np.abs(v_t - v_0) < 0.5):    #speed within target, no accel needed
-            a = 0
-        elif(v_0 > v_max):              #at max speed, can only decelerate
-            a = min(a, 0)
-        else:                           #limit accel based on max power
-            a_max = 1/v_0 * (P_max*K_m - v_avg*K_d*(v_0-w)**2 - K_m*K_f - K_m*K_g*sinslope)
-            a = min(a, a_max)
+        v_t = min(v_t, self.limit) #apply speed limit to target speed
+        v_error = v_t - v_0
+        if(v_error > 0):        #need to speed up, a > 0
+            motor_accel_limit = 1/v_0 * (P_max_out*K_m - v_avg*K_d*(v_0-w)**2 - K_m*K_f - K_m*K_g*sinslope) #max achieveable accel for motor
+            a = min(a_acc, motor_accel_limit)
+        else:                   #need to slow down, a < 0
+            motor_decel_limit = 1/v_0 * (P_max_in*K_m - v_avg*K_d*(v_0-w)**2 - K_m*K_f - K_m*K_g*sinslope) #max achieveable decel for motor (negative)
+            brake_power = motor_decel_limit - a_dec             #power that mechanical brakes dissipate
+            self.brake_energy += brake_power * dt
+            a = a_dec           #assume accel can always reach the amount needed because of mechanical brakes
 
         v_f = v_0 + a*dt                #calculate v_f for real with updated accel
         v_avg = 0.5 * (v_0 + v_f)
         d_f += v_avg * dt               #trapezoidal integration is exact bc accel is constant throughout timestep
+        self.leg_progress = d_f
+        self.speed = v_f    
 
+        alt_change = leg['altitude'](d_f) - leg['altitude'](d_0)
+        self.motor_power = self.get_motor_power(a, v_avg, w, d_f-d_0, alt_change)
+        self.array_power = leg['sun_flat'](d_0, self.time) * self.car_props['array_multiplier']
 
-        power_ff = v_avg/K_m * (K_d*(v_avg - w)**2) + K_f + K_g*sinslope #probably possible to isolate fric, integrate after knowing time
-        power_ext = a * v_avg / K_m
-        self.motor_power = power_ff + power_ext
-
-        self.energy -= self.motor_power
+        self.energy += (self.motor_power - self.array_power) * dt
+        self.energy = min(self.energy, self.car_props['max_energy'])
 
         if(d_f > leg['length']):
             self.try_loop = action['try_loop']
-            self.process_leg_finish()
+            self.process_leg_finish() #will update leg and self.done if needed
 
-
-        self.leg_progress = d_f
-        self.speed = v_f
         observation = self._get_obs()
 
         # self._renderer.render_step()
 
         reward = self.miles_earned
         return observation, reward, self.done
+
+
+
+
+
+
+
+
 
 
     def render(self):
