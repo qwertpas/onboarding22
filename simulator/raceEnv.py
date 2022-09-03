@@ -36,7 +36,8 @@ class RaceEnv(gym.Env):
         self.leg_index = 0
         self.leg_progress = 0
         self.speed = 0
-        self.energy = 0
+        self.energy = self.car_props['max_watthours']*3600  #joules left in battery
+        self.brake_energy = 0                               #joules dissipated in mechanical brakes
         self.time = self.legs[0]['start'] #datetime object
         self.miles_earned = 0
         self.try_loop = False
@@ -45,7 +46,7 @@ class RaceEnv(gym.Env):
         self.next_stop_dist = 0
         self.next_stop_index = 0
         self.limit = None
-        self.next_stop_dist = 0
+        self.next_limit_dist = 0
         self.next_limit_index = 0
 
         self.timestep = 5 #5 second intervals
@@ -57,7 +58,9 @@ class RaceEnv(gym.Env):
 
         #action is setting the target speed and choosing whether to try loops
         self.action_space = spaces.Dict({
-            "target_speed": spaces.Box(0, mpersec2mph(self.car_props['max_mph'])),
+            "target_speed": spaces.Box(mph2mpersec(self.car_props['min_mph']), mph2mpersec(self.car_props['max_mph'])),
+            "acceleration": spaces.Box(0, self.car_props['max_accel']),
+            "deceleration": spaces.Box(self.car_props['max_decel'], 0),
             "try_loop": spaces.Discrete(2),
         })
 
@@ -112,7 +115,7 @@ class RaceEnv(gym.Env):
 
         timestep = 60
         times = np.arange(self.time.timestamp(), end_time.timestamp()+timestep, step=timestep)
-        irradiances = np.array([leg['sun_tilt'](self.leg_progress, time) for time in times])
+        irradiances = np.array([leg['sun_tilt'](self.leg_progress, time.timestamp()) for time in times])
         powers = irradiances * self.car_props['array_multiplier']
 
         self.energy += powers.sum()
@@ -220,18 +223,18 @@ class RaceEnv(gym.Env):
 
 
 
-    def get_motor_power(self, accel, avg_speed, headwind, dist_change, alt_change):
+    def get_motor_power(self, accel, speed, headwind, dist_change, alt_change):
         '''
         Motor power loss in W, positive meaning power is used
         '''
-        K_m = self.car_props['K_m'] #motor
-        K_d = self.car_props['K_d'] #drag
-        K_f = self.car_props['K_f'] #friction
-        K_g = self.car_props['K_g'] #gravity
+        P_drag = self.car_props['P_drag']
+        P_fric = self.car_props['P_fric']
+        P_accel = self.car_props['P_accel']
+        mg = self.car_props['mass'] * 9.81
 
         #can probably be made into a matrix
-        power_ff = avg_speed/K_m * (K_d*(avg_speed - headwind)**2) + K_f + K_g*(alt_change / dist_change)    #power used to keep the avg speed.
-        power_acc = accel * avg_speed / K_m                                                                 #power used to accelerate (or decelerate)
+        power_ff = speed * (P_drag*(speed - headwind)**2 + P_fric + mg*(alt_change / dist_change))      #power used to keep the avg speed
+        power_acc = P_accel*accel*speed                                                                 #power used to accelerate (or decelerate)
         return power_ff + power_acc
 
 
@@ -241,29 +244,29 @@ class RaceEnv(gym.Env):
         v_0 = self.speed
         dt = self.timestep
         d_0 = self.leg_progress     #meters completed of the current leg
+        w = leg['headwind'](d_0, self.time.timestamp())
 
-        K_m = self.car_props['K_m'] #motor
-        K_d = self.car_props['K_d'] #drag
-        K_f = self.car_props['K_f'] #friction
-        K_g = self.car_props['K_g'] #gravity
         P_max_out = self.car_props['max_motor_output_power'] #max motor drive power (positive)
         P_max_in = self.car_props['max_motor_input_power'] #max regen power (positive)
+        v_min = mph2mpersec(self.car_props['min_mph']) 
         v_max = mph2mpersec(self.car_props['max_mph']) 
 
         assert action['acceleration'] > 0, "Acceleration must be positive"
         assert action['deceleration'] < 0, "Deceleration must be negative"
-        assert action['target_speed'] > 2.24 and action['target_speed'] < v_max, f"Target speed must be between 5 mph and {mpersec2mph(v_max)} mph"
+        assert action['target_speed'] > v_min and action['target_speed'] < v_max, f"Target speed must be between {round(mpersec2mph(v_min))} mph and {round(mpersec2mph(v_max))} mph"
 
-        a_acc = action['acceleration']
-        a_dec = action['deceleration']
-        v_t = action['target_speed']
-
+        a_acc = float(action['acceleration'])
+        a_dec = float(action['deceleration'])
+        v_t = float(action['target_speed'])
 
         # SPEEDLIMIT
-        if(d_0 > self.next_limit_dist):     #update speed limit if passed next sign
-            self.limit = leg.speedlimit[1][self.next_limit_index]
+        if(d_0 >= self.next_limit_dist and self.next_limit_index < len(leg['speedlimit'][0])):     #update speed limit if passed next sign
+            print(self.next_limit_index)
+            self.limit = leg['speedlimit'][1][self.next_limit_index]
+            
             self.next_limit_index += 1
-            self.next_stop_dist = leg.speedlimit[0][self.next_limit_index]
+            # if(self.next_limit_index < len(leg['speedlimit'][0])):
+            self.next_limit_dist = leg['speedlimit'][0][self.next_limit_index]
 
 
         # STOPPING
@@ -274,39 +277,50 @@ class RaceEnv(gym.Env):
             if(d_0 > self.next_stop_dist - stopping_dist):  #within distance to be able to decel to 0 at a constant decel
                 a = a_dec
                 v_avg = v_0/2.
-                w = leg['headwind'](d_0, self.time)
-                alt_change = leg['altitude'][self.next_stop_dist] - leg['altitude'][d_0]
+                alt_change = leg['altitude'](self.next_stop_dist) - leg['altitude'](d_0)
                 stopping_time = -v_0/a
 
-                powerloss = self.get_powerloss(a, v_avg, w, stopping_dist, alt_change)
-                powergain = leg['sun_flat'](d_0, self.time) * self.car_props['array_multiplier']
-                self.energy += (powergain - powerloss) * stopping_time
-                self.energy = min(self.energy, self.car_props['max_energy'])
+                motor_power = self.get_motor_power(a, v_avg, w, stopping_dist, alt_change)
+                array_power = leg['sun_flat'](d_0, self.time.timestamp()) * self.car_props['array_multiplier']
+                self.energy += (array_power - motor_power) * stopping_time
+                self.energy = min(self.energy, self.car_props['max_watthours']*3600)
 
-                self.time += stopping_time
+                self.time += timedelta(seconds=stopping_time)
                 self.leg_progress = self.next_stop_dist
+
                 self.next_stop_index += 1
-                self.next_stop_dist = leg.stop_dists[self.next_stop_index]  #completed the stop
+                if(self.next_stop_index < len(leg['stop_dists'])):
+                    self.next_stop_dist = leg['stop_dists'][self.next_stop_index]  #completed the stop
 
                 observation = self._get_obs()
-                return self._get_obs, reward, self.done
+                return self._get_obs, self.miles_earned, self.done
 
 
         # CALCULATE ACTUAL ACCELERATION
         d_f = d_0 + v_t*dt      #estimate dist at end of step for now by assuming actualspeed=targetspeed
         sinslope = (leg['altitude'](d_f) - leg['altitude'](d_0)) / (d_f - d_0)      #approximate slope
 
+        P_drag = self.car_props['P_drag']
+        P_fric = self.car_props['P_fric']
+        P_accel = self.car_props['P_accel']
+        mg = self.car_props['mass'] * 9.81
+
         v_t = min(v_t, self.limit) #apply speed limit to target speed
         v_error = v_t - v_0
         if(v_error > 0):        #need to speed up, a > 0
-            motor_accel_limit = 1/v_0 * (P_max_out*K_m - v_avg*K_d*(v_0-w)**2 - K_m*K_f - K_m*K_g*sinslope) #max achieveable accel for motor
-            a = min(a_acc, motor_accel_limit)
+            if(np.abs(v_0) > 0.1):
+                motor_accel_limit = 1/P_accel * (P_max_out/v_0 - P_drag*(v_0-w)**2 - P_fric - mg*sinslope) #max achieveable accel for motor
+                a = min(a_acc, motor_accel_limit)
+            else:
+                a = a_acc
         else:                   #need to slow down, a < 0
-            motor_decel_limit = 1/v_0 * (P_max_in*K_m - v_avg*K_d*(v_0-w)**2 - K_m*K_f - K_m*K_g*sinslope) #max achieveable decel for motor (negative)
-            brake_power = motor_decel_limit - a_dec             #power that mechanical brakes dissipate
-            self.brake_energy += brake_power * dt
+            if(np.abs(v_0) > 0.1):
+                motor_decel_limit = 1/P_accel * (P_max_in/v_0 - P_drag*(v_0-w)**2 - P_fric - mg*sinslope) #max achieveable decel for motor (negative)
+                brake_power = motor_decel_limit - a_dec             #power that mechanical brakes dissipate
+                self.brake_energy += brake_power * dt
             a = a_dec           #assume accel can always reach the amount needed because of mechanical brakes
 
+                
 
         # CALCULATE DISTANCE, SPEED, AND POWER NEEDED
         v_f = v_0 + a*dt                #get speed after accelerating
@@ -317,10 +331,10 @@ class RaceEnv(gym.Env):
 
         alt_change = leg['altitude'](d_f) - leg['altitude'](d_0)
         self.motor_power = self.get_motor_power(a, v_avg, w, d_f-d_0, alt_change)
-        self.array_power = leg['sun_flat'](d_0, self.time) * self.car_props['array_multiplier']
+        self.array_power = leg['sun_flat'](d_0, self.time.timestamp()) * self.car_props['array_multiplier']
 
         self.energy += (self.motor_power - self.array_power) * dt
-        self.energy = min(self.energy, self.car_props['max_energy'])
+        self.energy = min(self.energy, self.car_props['max_watthours']*3600)
 
 
         # CHECK IF DONE WITH CURRENT LEG
@@ -394,17 +408,18 @@ def main():
     obs = env.reset()
 
     action = env.action_space.sample()
-    print(action)
 
     observation, reward, done = env.step(action)
 
     while not done:
         # Take a random action
         action = env.action_space.sample()
+        # print(env.miles_earned)
+
         observation, reward, done = env.step(action)
         
         # Render the game
-        env.render()
+        # env.render()
         
         if done == True:
             break
