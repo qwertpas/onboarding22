@@ -244,7 +244,7 @@ def main():
     )
     ## UNCOMMENT BELOW TO GENERATE ROUTE FILE
     # route.gen_weather(dist_step=5000)
-    route.save_as("ind-gra_2022,7,9-10_5km_openmeteo")
+    # route.save_as("ind-gra_2022,7,9-10_5km_openmeteo")
 
 
     new_route = Route.open("ind-gra_2022,7,9-10_5km_openmeteo")

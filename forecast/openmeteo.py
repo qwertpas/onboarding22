@@ -42,6 +42,8 @@ def get_wind_solar(latitude, longitude, start:datetime, stop:datetime):
         except Exception as e:
             print(f"Error: {e} \n {response}")
 
+        if(values[0] == None): values[0] = 0
+
         while values and values is None:    #remove trailing Nones
             values[var].pop()
 
