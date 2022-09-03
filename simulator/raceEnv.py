@@ -7,10 +7,15 @@ import pygame
 import numpy as np
 from numpy import sin, cos
 import json
-from route import MORNING_CHARGE_HOURS, EVENING_CHARGE_HOURS, Route
+
+import sys, os
+dir = os.path.dirname(__file__)
+sys.path.insert(0, dir+'/../')   #allow imports from parent directory "onboarding22"
+
+from route.route import MORNING_CHARGE_HOURS, EVENING_CHARGE_HOURS, Route
 from util import *
 
-dir = os.path.dirname(__file__)
+
 
 class RaceEnv(gym.Env):
     metadata = {
@@ -20,7 +25,8 @@ class RaceEnv(gym.Env):
 
     def __init__(self, render_mode="human", car="brizo_fsgp22", route="ind-gra_2022,7,9-10_5km_openmeteo"):
 
-        with open(f"{dir}/cars/{car}.json", 'r') as props_json:
+        cars_dir = os.path.dirname(__file__) + '/../cars'
+        with open(f"{cars_dir}/{car}.json", 'r') as props_json:
             self.car_props = json.load(props_json)
         
         route_obj = Route.open(route)
@@ -31,7 +37,7 @@ class RaceEnv(gym.Env):
         self.leg_progress = 0
         self.speed = 0
         self.energy = 0
-        self.time = self.legs[0]['start']
+        self.time = self.legs[0]['start'] #datetime object
         self.miles_earned = 0
         self.try_loop = False
         self.done = False
@@ -97,21 +103,20 @@ class RaceEnv(gym.Env):
         return observation
 
 
-    def charge(self, time_length:timedelta, tilted=True):
-
+    def charge(self, time_length:timedelta):
+        '''
+        Updates energy and time, simulating the car sitting in place tilting its array optimally towards the sun for a period of time
+        '''
         leg = self.legs[self.leg_index]
-
         end_time = self.time + time_length
 
-        #array of charging times in seconds, spaced a minute apart
-        np.arange(self.time.timestamp(), end_time.timestamp()+60, step=60) 
+        timestep = 60
+        times = np.arange(self.time.timestamp(), end_time.timestamp()+timestep, step=timestep)
+        irradiances = np.array([leg['sun_tilt'](self.leg_progress, time) for time in times])
+        powers = irradiances * self.car_props['array_multiplier']
 
-        # leg['solar'](dist, )
-
-
-        self.time += time_length
-
-        # self.energy += solar_func(self.leg_progress, self.time) * time_length
+        self.energy += powers.sum()
+        self.time = self.time + time_length
 
 
     def process_leg_finish(self):
@@ -253,11 +258,15 @@ class RaceEnv(gym.Env):
         a_dec = action['deceleration']
         v_t = action['target_speed']
 
+
+        # SPEEDLIMIT
         if(d_0 > self.next_limit_dist):     #update speed limit if passed next sign
             self.limit = leg.speedlimit[1][self.next_limit_index]
             self.next_limit_index += 1
             self.next_stop_dist = leg.speedlimit[0][self.next_limit_index]
 
+
+        # STOPPING
         if(d_0 > self.next_stop_dist - 1000):       #check if within a reasonable stopping distance (1km)
 
             stopping_dist = -v_0*v_0 / (2*a_dec)    #calculate distance it would take to decel to 0 at current speed
@@ -282,8 +291,10 @@ class RaceEnv(gym.Env):
                 observation = self._get_obs()
                 return self._get_obs, reward, self.done
 
+
+        # CALCULATE ACTUAL ACCELERATION
         d_f = d_0 + v_t*dt      #estimate dist at end of step for now by assuming actualspeed=targetspeed
-        sinslope = (leg['altitude'](d_f) - leg['altitude'](d_0)) / (d_f - d_0)
+        sinslope = (leg['altitude'](d_f) - leg['altitude'](d_0)) / (d_f - d_0)      #approximate slope
 
         v_t = min(v_t, self.limit) #apply speed limit to target speed
         v_error = v_t - v_0
@@ -296,9 +307,11 @@ class RaceEnv(gym.Env):
             self.brake_energy += brake_power * dt
             a = a_dec           #assume accel can always reach the amount needed because of mechanical brakes
 
-        v_f = v_0 + a*dt                #calculate v_f for real with updated accel
-        v_avg = 0.5 * (v_0 + v_f)
-        d_f += v_avg * dt               #trapezoidal integration is exact bc accel is constant throughout timestep
+
+        # CALCULATE DISTANCE, SPEED, AND POWER NEEDED
+        v_f = v_0 + a*dt                #get speed after accelerating
+        v_avg = 0.5 * (v_0 + v_f)       #speed increases linearly so v_avg can be used in integration with no accuracy loss
+        d_f += v_avg * dt               #integrate velocity to get distance at end of step
         self.leg_progress = d_f
         self.speed = v_f    
 
@@ -309,14 +322,16 @@ class RaceEnv(gym.Env):
         self.energy += (self.motor_power - self.array_power) * dt
         self.energy = min(self.energy, self.car_props['max_energy'])
 
+
+        # CHECK IF DONE WITH CURRENT LEG
         if(d_f > leg['length']):
             self.try_loop = action['try_loop']
             self.process_leg_finish() #will update leg and self.done if needed
 
-        observation = self._get_obs()
 
         # self._renderer.render_step()
 
+        observation = self._get_obs()
         reward = self.miles_earned
         return observation, reward, self.done
 
@@ -379,6 +394,7 @@ def main():
     obs = env.reset()
 
     action = env.action_space.sample()
+    print(action)
 
     observation, reward, done = env.step(action)
 
