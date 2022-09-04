@@ -1,12 +1,9 @@
 from datetime import timedelta
-from re import L
-from tkinter import E
 import gym
 from gym import spaces
 from gym.utils.renderer import Renderer
 import pygame
 import numpy as np
-from numpy import sin, cos
 import json
 import matplotlib.pyplot as plt
 
@@ -18,14 +15,9 @@ from route.route import *
 from util import *
 
 
-
 class RaceEnv(gym.Env):
-    metadata = {
-        "render_modes": ["human", "rgb_array", "single_rgb_array"], 
-        "render_fps": 4
-    }
 
-    def __init__(self, render_mode="human", car="brizo_fsgp22", route="ind-gra_2022,7,9-10_5km_openmeteo"):
+    def __init__(self, render=True, car="brizo_fsgp22", route="ind-gra_2022,7,9-10_5km_openmeteo"):
 
         cars_dir = os.path.dirname(__file__) + '/../cars'
         with open(f"{cars_dir}/{car}.json", 'r') as props_json:
@@ -34,6 +26,7 @@ class RaceEnv(gym.Env):
         route_obj = Route.open(route)
         self.legs = route_obj.leg_list
 
+        self.current_leg = self.legs[0]
         self.leg_index = 0
         self.leg_progress = 0
         self.speed = 0
@@ -46,6 +39,7 @@ class RaceEnv(gym.Env):
         self.array_power = 0
         
         self.try_loop = False
+
         self.done = False
 
         self.next_stop_dist = 0
@@ -79,13 +73,11 @@ class RaceEnv(gym.Env):
             "array_powers": [[]],
         }
 
-        assert render_mode is None or render_mode in self.metadata["render_modes"]
-        self.render_mode = render_mode
-        self._renderer = Renderer(self.render_mode, self._render_frame)
-
-        self.window = None
-        self.window_size = 512  # The size of the PyGame window
-        self.clock = None
+        if(render):
+            self._renderer = Renderer(self.render_mode, self._render_frame)
+            self.window = None
+            self.window_size = 512  # The size of the PyGame window
+            self.clock = None
 
         print(f"Start race at {self.time}")
 
@@ -126,6 +118,8 @@ class RaceEnv(gym.Env):
         '''
         Updates energy and time, simulating the car sitting in place tilting its array optimally towards the sun for a period of time
         '''
+        time_length = max(timedelta(0), time_length)
+
         leg = self.legs[self.leg_index]
         end_time = self.time + time_length
 
@@ -146,7 +140,7 @@ class RaceEnv(gym.Env):
         '''
         leg = self.legs[self.leg_index]
 
-        if(self.time > leg['close'] and leg['type']=='loop'):
+        if(self.time > leg['close'] and (leg['type']=='loop' or leg['end']=='stagestop')):
             print("Earned 0 miles")
         else:
             print(f"Earned {round(meters2miles(leg['length']))} miles")
@@ -239,6 +233,12 @@ class RaceEnv(gym.Env):
                     self.charge(leg['close'] - self.time)                        #charge until stage close
                     
                 #at this point stage must be closed. 
+                if(is_last_leg):
+                    print('Completed the last loop, not enough time to complete another. Race done.')
+                    self.done = True
+                    return
+
+                next_leg = self.legs[self.leg_index+1]
                 if(self.try_loop and next_leg['type']=='loop'):
                     self.leg_index += 1
                     print(f"Wait for next loop tomorrow: {next_leg['name']}")
@@ -265,6 +265,7 @@ class RaceEnv(gym.Env):
                 if(leg['type']=='base'):
                     print('Did not make stagestop on time, considered trailered')        
                     self.done = True
+                    self.miles_earned = 0
                     return
                 else:
 
@@ -299,6 +300,7 @@ class RaceEnv(gym.Env):
 
     def step(self, action):
         leg = self.legs[self.leg_index]
+        self.current_leg = leg
 
         v_0 = self.speed
         dt = self.timestep
@@ -340,7 +342,6 @@ class RaceEnv(gym.Env):
         if(d_0 > self.next_stop_dist - 1000):       #check if within a reasonable stopping distance (1km)
 
             stopping_dist = -v_0*v_0 / (2*a_dec)    #calculate distance it would take to decel to 0 at current speed
-            # print(stopping_dist)   
 
             if(d_0 > self.next_stop_dist - stopping_dist):  #within distance to be able to decel to 0 at a constant decel
                 a = a_dec
@@ -363,8 +364,7 @@ class RaceEnv(gym.Env):
                 else:
                     self.next_stop_dist = float('inf')
 
-                observation = self._get_obs()
-                return self._get_obs, self.miles_earned, self.done
+                return self.done
 
 
         # CALCULATE ACTUAL ACCELERATION
@@ -379,25 +379,29 @@ class RaceEnv(gym.Env):
         v_t = min(v_t, self.limit) #apply speed limit to target speed
         v_error = v_t - v_0
         if(v_error > 0):        #need to speed up, a > 0
-            if(np.abs(v_0) > 0.1):
+            if(np.abs(v_0) > 1): #avoid divide by 0
                 motor_accel_limit = 1/P_accel * (P_max_out/v_0 - P_drag*(v_0-w)**2 - P_fric - mg*sinslope) #max achieveable accel for motor
                 a = min(a_acc, motor_accel_limit)
             else:
                 a = a_acc
-        else:                   #need to slow down, a < 0
+        elif(v_error < 0):                   #need to slow down, a < 0
             if(np.abs(v_0) > 0.1):
                 motor_decel_limit = 1/P_accel * (P_max_in/v_0 - P_drag*(v_0-w)**2 - P_fric - mg*sinslope) #max achieveable decel for motor (negative)
                 brake_power = motor_decel_limit - a_dec             #power that mechanical brakes dissipate
                 self.brake_energy += brake_power * dt
             a = a_dec           #assume accel can always reach the amount needed because of mechanical brakes
+        else:
+            a = 0
 
+        if(np.abs(v_error) < a * dt): #adjust dt to not overshoot target speed
+            dt = np.abs(v_error / a)
 
         # CALCULATE DISTANCE, SPEED, AND POWER NEEDED
         v_f = v_0 + a*dt                #get speed after accelerating
         v_avg = 0.5 * (v_0 + v_f)       #speed increases linearly so v_avg can be used in integration with no accuracy loss
         d_f = d_0 + v_avg * dt               #integrate velocity to get distance at end of step
         self.leg_progress = d_f
-        self.speed = v_f    
+        self.speed = v_f
 
         alt_change = leg['altitude'](d_f) - leg['altitude'](d_0)
         self.motor_power = self.get_motor_power(a, v_avg, w, d_f-d_0, alt_change)
@@ -406,7 +410,6 @@ class RaceEnv(gym.Env):
         self.energy += (self.array_power - self.motor_power) * dt
         self.energy = min(self.energy, self.car_props['max_watthours']*3600)
         self.time += timedelta(seconds=dt)
-
 
         # CHECK IF COMPLETED CURRENT LEG
         if(d_f >= leg['length']):
@@ -420,7 +423,6 @@ class RaceEnv(gym.Env):
                 if(item != 'leg_names'):
                     self.log[item].append([])
 
-
         # CHECK IF END OF DAY
         if(self.time > datetime(self.time.year, self.time.month, self.time.day, DRIVE_STOP_HOUR)):
             self.charge(timedelta(hours=CHARGE_STOP_HOUR - DRIVE_STOP_HOUR))
@@ -428,26 +430,9 @@ class RaceEnv(gym.Env):
             self.charge(timedelta(hours=DRIVE_START_HOUR - CHARGE_START_HOUR))
             print("End of day")
 
-
-        # if(self.time > leg['close']):
-
-            
-
-        # else:
-        #     print(d_f, leg['length'], self.speed)
-
         # self._renderer.render_step()
 
-        observation = self._get_obs()
-        reward = self.miles_earned
-        return observation, reward, self.done
-
-
-
-
-
-
-
+        return self.done
 
 
 
@@ -496,34 +481,30 @@ class RaceEnv(gym.Env):
 
 
 def main():
-    env = RaceEnv(render_mode='human')
+    env = RaceEnv(render=True)
 
     # print(env.legs)
-
-    obs = env.reset()
 
     action = {
         "target_mph": 35,
         "acceleration": 0.5,
         "deceleration": -0.5,
-        "try_loop": True,
+        "try_loop": False,
     }
 
-    observation, reward, done = env.step(action)
 
-    while not done:
-        # Take a random action
-        # action = env.action_space.sample()
-        # print(env.leg_progress, env.speed)
-
-        observation, reward, done = env.step(action)
+    while True:
         
-        # Render the game
-        # env.render()
+        action['target_mph']
+        done = env.step(action)
         
         if done == True:
             break
+    
+    print(f"Total earned {env.miles_earned * meters2miles()} miles")
 
+    doPlot = True
+    if(not doPlot): return
 
     for i in range(len(env.log['leg_names'])):
         times = env.log['times'][i]
@@ -546,7 +527,7 @@ def main():
         fig.suptitle(env.log['leg_names'][i])
         fig.legend()
     
-    # plt.show()
+    plt.show()
 
     env.close()
 
