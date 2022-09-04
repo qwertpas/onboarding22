@@ -115,7 +115,7 @@ class RaceEnv(gym.Env):
 
         timestep = 60
         times = np.arange(self.time.timestamp(), end_time.timestamp()+timestep, step=timestep)
-        irradiances = np.array([leg['sun_tilt'](self.leg_progress, time.timestamp()) for time in times])
+        irradiances = np.array([leg['sun_tilt'](self.leg_progress, time) for time in times])
         powers = irradiances * self.car_props['array_multiplier']
 
         self.energy += powers.sum()
@@ -289,6 +289,9 @@ class RaceEnv(gym.Env):
                 if(self.next_stop_index+1 < len(leg['stop_dists'])):
                     self.next_stop_index += 1
                     self.next_stop_dist = leg['stop_dists'][self.next_stop_index]  #completed the stop
+                else:
+                    self.next_stop_dist = leg['length']
+                    print('completed last stop of leg')
 
                 observation = self._get_obs()
                 return self._get_obs, self.miles_earned, self.done
@@ -342,7 +345,7 @@ class RaceEnv(gym.Env):
             self.try_loop = action['try_loop']
             self.process_leg_finish() #will update leg and self.done if needed
         else:
-            print(d_f, leg['length'])
+            print(d_f, leg['length'], self.speed)
 
 
         # self._renderer.render_step()
