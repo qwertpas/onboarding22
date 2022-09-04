@@ -1,4 +1,5 @@
 from datetime import timedelta
+from re import L
 from tkinter import E
 import gym
 from gym import spaces
@@ -41,6 +42,9 @@ class RaceEnv(gym.Env):
         self.time = self.legs[0]['start'] #datetime object
         self.miles_driven = 0
         self.miles_earned = 0
+        self.motor_power = 0
+        self.array_power = 0
+        
         self.try_loop = False
         self.done = False
 
@@ -66,10 +70,13 @@ class RaceEnv(gym.Env):
         })
 
         self.log = {
-            "times": [],
-            "dists": [],
-            "speeds": [],
-            "energies": []
+            "leg_names": [],
+            "times": [[]],
+            "dists": [[]],
+            "speeds": [[]],
+            "energies": [[]],
+            "motor_powers": [[]],
+            "array_powers": [[]],
         }
 
 
@@ -274,10 +281,12 @@ class RaceEnv(gym.Env):
         d_0 = self.leg_progress     #meters completed of the current leg
         w = leg['headwind'](d_0, self.time.timestamp())
 
-        self.log['times'].append(self.time)
-        self.log['dists'].append(self.leg_progress)
-        self.log['speeds'].append(self.speed)
-        self.log['energies'].append(self.energy)
+        self.log['times'][-1].append(self.time)
+        self.log['dists'][-1].append(self.leg_progress)
+        self.log['speeds'][-1].append(self.speed)
+        self.log['energies'][-1].append(self.energy)
+        self.log['motor_powers'][-1].append(self.motor_power)
+        self.log['array_powers'][-1].append(self.array_power)
 
         P_max_out = self.car_props['max_motor_output_power'] #max motor drive power (positive)
         P_max_in = self.car_props['max_motor_input_power'] #max regen power (positive)
@@ -290,7 +299,7 @@ class RaceEnv(gym.Env):
 
         a_acc = float(action['acceleration'])
         a_dec = float(action['deceleration'])
-        v_t = float(action['target_mph'])
+        v_t = float(action['target_mph']) * mph2mpersec()
 
         # SPEEDLIMIT
         if(d_0 >= self.next_limit_dist):     #update speed limit if passed next sign
@@ -307,6 +316,7 @@ class RaceEnv(gym.Env):
         if(d_0 > self.next_stop_dist - 1000):       #check if within a reasonable stopping distance (1km)
 
             stopping_dist = -v_0*v_0 / (2*a_dec)    #calculate distance it would take to decel to 0 at current speed
+            print(stopping_dist)    #calculate distance it would take to decel to 0 at current speed
 
             if(d_0 > self.next_stop_dist - stopping_dist):  #within distance to be able to decel to 0 at a constant decel
                 a = a_dec
@@ -321,12 +331,13 @@ class RaceEnv(gym.Env):
 
                 self.time += timedelta(seconds=stopping_time)
                 self.leg_progress = self.next_stop_dist
+                self.speed = 0
 
                 if(self.next_stop_index+1 < len(leg['stop_dists'])):
                     self.next_stop_index += 1
                     self.next_stop_dist = leg['stop_dists'][self.next_stop_index]  #completed the stop
                 else:
-                    self.next_stop_dist = leg['length']
+                    self.next_stop_dist = float('inf')
 
                 observation = self._get_obs()
                 return self._get_obs, self.miles_earned, self.done
@@ -356,7 +367,6 @@ class RaceEnv(gym.Env):
                 self.brake_energy += brake_power * dt
             a = a_dec           #assume accel can always reach the amount needed because of mechanical brakes
 
-                
 
         # CALCULATE DISTANCE, SPEED, AND POWER NEEDED
         v_f = v_0 + a*dt                #get speed after accelerating
@@ -369,8 +379,9 @@ class RaceEnv(gym.Env):
         self.motor_power = self.get_motor_power(a, v_avg, w, d_f-d_0, alt_change)
         self.array_power = leg['sun_flat'](d_0, self.time.timestamp()) * self.car_props['array_multiplier']
 
-        self.energy += (self.motor_power - self.array_power) * dt
+        self.energy += (self.array_power - self.motor_power) * dt
         self.energy = min(self.energy, self.car_props['max_watthours']*3600)
+        self.time += timedelta(seconds=dt)
 
 
         # CHECK IF COMPLETED CURRENT LEG
@@ -379,10 +390,14 @@ class RaceEnv(gym.Env):
             self.try_loop = action['try_loop']
             self.process_leg_finish() #will update leg and self.done if needed
             self.reset_leg()
+            
+            self.log['leg_names'].append(leg['name'])
+            for item in self.log:
+                if(item != 'leg_names'):
+                    self.log[item].append([])
 
         # else:
-            # print(d_f, leg['length'], self.speed)
-
+        #     print(d_f, leg['length'], self.speed)
 
         # self._renderer.render_step()
 
@@ -450,8 +465,8 @@ def main():
 
     action = {
         "target_mph": 35,
-        "acceleration": 1,
-        "deceleration": -1,
+        "acceleration": 0.5,
+        "deceleration": -0.5,
         "try_loop": False,
     }
 
@@ -460,7 +475,7 @@ def main():
     while not done:
         # Take a random action
         # action = env.action_space.sample()
-        print(env.leg_progress, env.leg_index)
+        # print(env.leg_progress, env.speed)
 
         observation, reward, done = env.step(action)
         
@@ -470,16 +485,27 @@ def main():
         if done == True:
             break
 
-    times = env.log['times']
-    dists = np.array(env.log['dists']) * meters2miles()
-    speeds = np.array(env.log['speeds']) * mpersec2mph()
-    energies = np.array(env.log['energies']) / 3600.
 
-    fig, axs = plt.subplots(3, 1, sharex=True)
-    axs[0].plot(times, dists, label='miles')
-    axs[1].plot(times, speeds, label='mph')
-    axs[2].plot(times, energies, label='watthours in battery')
-    fig.legend()
+    for i in range(len(env.log['leg_names'])):
+        times = env.log['times'][i]
+        dists = np.array(env.log['dists'][i]) * meters2miles()
+        speeds = np.array(env.log['speeds'][i]) * mpersec2mph()
+        energies = np.array(env.log['energies'][i]) / 3600.
+        motor_powers = np.array(env.log['motor_powers'][i])
+        array_powers = np.array(env.log['array_powers'][i])
+        
+        for test_leg in env.legs:
+            if test_leg['name'] == env.log['leg_names'][i]: leg = test_leg
+
+        fig, axs = plt.subplots(3, 1, sharex=True)
+        axs[0].plot(dists, motor_powers, label='motor_power')
+        axs[1].plot(dists, speeds, label='mph')
+        axs[2].plot(dists, energies, label='watthours in battery')
+
+        axs[1].vlines(leg['stop_dists']*meters2miles(), ymin=0, ymax=55, colors='red', linewidth=0.5, label='stops')
+
+        fig.suptitle(env.log['leg_names'][i])
+        fig.legend()
     plt.show()
 
     env.close()

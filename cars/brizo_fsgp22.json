@@ -10,6 +10,6 @@
     "max_motor_output_power": 6000,
     "max_motor_input_power": -4000,
     "max_watthours": 5400,
-    "max_accel": 1,
-    "max_decel": -1
+    "max_accel": 0.2,
+    "max_decel": -0.2
 }
