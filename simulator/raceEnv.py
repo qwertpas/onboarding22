@@ -14,7 +14,7 @@ import sys, os
 dir = os.path.dirname(__file__)
 sys.path.insert(0, dir+'/../')   #allow imports from parent directory "onboarding22"
 
-from route.route import MORNING_CHARGE_HOURS, EVENING_CHARGE_HOURS, Route
+from route.route import *
 from util import *
 
 
@@ -79,7 +79,6 @@ class RaceEnv(gym.Env):
             "array_powers": [[]],
         }
 
-
         assert render_mode is None or render_mode in self.metadata["render_modes"]
         self.render_mode = render_mode
         self._renderer = Renderer(self.render_mode, self._render_frame)
@@ -87,6 +86,8 @@ class RaceEnv(gym.Env):
         self.window = None
         self.window_size = 512  # The size of the PyGame window
         self.clock = None
+
+        print(f"Start race at {self.time}")
 
     def _get_obs(self):
         return {
@@ -145,7 +146,11 @@ class RaceEnv(gym.Env):
         '''
         leg = self.legs[self.leg_index]
 
-        if(self.time < leg['close']): self.miles_earned += leg['length'] #earn miles if completed on time
+        if(self.time > leg['close'] and leg['type']=='loop'):
+            print("Earned 0 miles")
+        else:
+            print(f"Earned {round(meters2miles(leg['length']))} miles")
+            self.miles_earned += leg['length'] #earn miles if completed on time
 
         is_last_leg = self.leg_index == (len(self.legs) - 1)
         if(is_last_leg and leg['type']=='base'):
@@ -168,10 +173,10 @@ class RaceEnv(gym.Env):
 
                 if(self.try_loop and (leg['type']=='loop' or next_leg['type']=='loop')): #there's a loop and user wants to do it
                     if(leg['type']=='loop'):
-                        print(f"Redo loop: {leg['name']}")
+                        print(f"Redo loop: {leg['name']} at {self.time}")
                         return
                     else:
-                        print(f"Do the upcoming loop: {next_leg['name']}")
+                        print(f"Try the upcoming loop: {next_leg['name']} at {self.time}")
                         self.leg_index += 1
                         return
                 else:
@@ -182,17 +187,24 @@ class RaceEnv(gym.Env):
 
                     self.charge(next_leg['start'] - self.time) #wait for release time                        
 
-                    print(f"End at checkpoint, move onto next base leg: {next_leg['name']}")
+                    print(f"End at checkpoint, move onto next base leg: {next_leg['name']} at {self.time}")
                     return
 
             else: #checkpoint closed, need to move onto next base leg. To get to this point self.time is the close time.
+                if(leg['type']=='loop'):
+                    print(f"Did not arrive before close: {leg['name']}")
+
                 if(next_leg['type']=='loop'):
                     print('Next leg is a loop, skipping to the base leg after that')
                     self.leg_index += 2
                     return
                 else:
-                    print('Do the upcoming base leg')
+                    while next_leg['type']!='base': #pick the next base leg
+                        self.leg_index += 1
+                        next_leg = self.legs[self.leg_index]
                     self.leg_index += 1
+                    print(f"Start the upcoming base leg: {next_leg['name']} at {self.time}")
+                    # print(self.legs[self.leg_index])
                     return
 
         else:                   #leg ends at a stage stop.
@@ -201,10 +213,11 @@ class RaceEnv(gym.Env):
 
                 self.charge(min(leg['close'] - self.time, holdtime)) #stay at stagestop for the required holdtime, or it closes
 
+
                 if(self.time < leg['close']): #stage hasn't closed yet after serving hold time
 
                     if(self.try_loop and leg['type']=='loop'):
-                        print(f"Completed the loop and trying it again: {leg['name']}")
+                        print(f"Completed the loop and trying it again: {leg['name']} at {self.time}")
                         self.charge(timedelta(minutes=15))
                         return
 
@@ -214,13 +227,18 @@ class RaceEnv(gym.Env):
                         self.charge(timedelta(hours=EVENING_CHARGE_HOURS))    #evening charging
                         self.done = True
                         return
+
+                    next_leg = self.legs[self.leg_index+1]
+                    if(self.try_loop and next_leg['type']=='loop'):
+                        print(f"Completed the base leg and trying the next loop: {next_leg['name']}")
+                        self.charge(timedelta(minutes=15))
+                        self.leg_index += 1
+                        return
                     
                     #could be base route, or a loop that user doesn't want to try again.
                     self.charge(leg['close'] - self.time)                        #charge until stage close
                     
                 #at this point stage must be closed. 
-                next_leg = self.legs[self.leg_index+1]
-
                 if(self.try_loop and next_leg['type']=='loop'):
                     self.leg_index += 1
                     print(f"Wait for next loop tomorrow: {next_leg['name']}")
@@ -238,18 +256,24 @@ class RaceEnv(gym.Env):
                     print(f"Wait for next base leg tomorrow: {next_leg['name']}")
                 
                 self.charge(timedelta(hours=EVENING_CHARGE_HOURS))    #evening charging
-                self.time = next_leg['start'] - timedelta(MORNING_CHARGE_HOURS) #time skip to beginning of morning charging
+                self.time = datetime(self.time.year, self.time.month, self.time.day+1, CHARGE_START_HOUR) #time skip to beginning of morning charging
                 self.charge(timedelta(hours=MORNING_CHARGE_HOURS))    #morning charging
                 # self.leg_index += 1
                 return
 
             else:
                 if(leg['type']=='base'):
-                    print('did not make stagestop on time, considered trailered')        
+                    print('Did not make stagestop on time, considered trailered')        
                     self.done = True
                     return
                 else:
-                    print('loop arrived after stage close, does not count.')
+
+                    if(is_last_leg):
+                        print('Loop arrived after stage close, does not count. Race done.')
+                        self.done = True
+                        return
+
+                    print('Loop arrived after stage close, does not count. Moving onto next leg.')
                     self.charge(leg['close'] - self.time + timedelta(hours=EVENING_CHARGE_HOURS))      #charge until end of evening charging
                     self.time = next_leg['start'] - timedelta(MORNING_CHARGE_HOURS) #time skip to beginning of morning charging
                     self.charge(timedelta(hours=MORNING_CHARGE_HOURS))    #morning charging
@@ -316,7 +340,7 @@ class RaceEnv(gym.Env):
         if(d_0 > self.next_stop_dist - 1000):       #check if within a reasonable stopping distance (1km)
 
             stopping_dist = -v_0*v_0 / (2*a_dec)    #calculate distance it would take to decel to 0 at current speed
-            print(stopping_dist)    #calculate distance it would take to decel to 0 at current speed
+            # print(stopping_dist)   
 
             if(d_0 > self.next_stop_dist - stopping_dist):  #within distance to be able to decel to 0 at a constant decel
                 a = a_dec
@@ -344,8 +368,8 @@ class RaceEnv(gym.Env):
 
 
         # CALCULATE ACTUAL ACCELERATION
-        d_f = d_0 + v_t*dt      #estimate dist at end of step for now by assuming actualspeed=targetspeed
-        sinslope = (leg['altitude'](d_f) - leg['altitude'](d_0)) / (d_f - d_0)      #approximate slope
+        d_f_est = d_0 + v_t*dt      #estimate dist at end of step for now by assuming actualspeed=targetspeed
+        sinslope = (leg['altitude'](d_f_est) - leg['altitude'](d_0)) / (d_f_est - d_0)      #approximate slope
 
         P_drag = self.car_props['P_drag']
         P_fric = self.car_props['P_fric']
@@ -371,7 +395,7 @@ class RaceEnv(gym.Env):
         # CALCULATE DISTANCE, SPEED, AND POWER NEEDED
         v_f = v_0 + a*dt                #get speed after accelerating
         v_avg = 0.5 * (v_0 + v_f)       #speed increases linearly so v_avg can be used in integration with no accuracy loss
-        d_f += v_avg * dt               #integrate velocity to get distance at end of step
+        d_f = d_0 + v_avg * dt               #integrate velocity to get distance at end of step
         self.leg_progress = d_f
         self.speed = v_f    
 
@@ -386,7 +410,7 @@ class RaceEnv(gym.Env):
 
         # CHECK IF COMPLETED CURRENT LEG
         if(d_f >= leg['length']):
-            print(f"Completed leg: {leg['name']}")
+            print(f"Completed leg: {leg['name']} at {self.time}")
             self.try_loop = action['try_loop']
             self.process_leg_finish() #will update leg and self.done if needed
             self.reset_leg()
@@ -395,6 +419,19 @@ class RaceEnv(gym.Env):
             for item in self.log:
                 if(item != 'leg_names'):
                     self.log[item].append([])
+
+
+        # CHECK IF END OF DAY
+        if(self.time > datetime(self.time.year, self.time.month, self.time.day, DRIVE_STOP_HOUR)):
+            self.charge(timedelta(hours=CHARGE_STOP_HOUR - DRIVE_STOP_HOUR))
+            self.time = datetime(self.time.year, self.time.month, self.time.day+1, CHARGE_START_HOUR)
+            self.charge(timedelta(hours=DRIVE_START_HOUR - CHARGE_START_HOUR))
+            print("End of day")
+
+
+        # if(self.time > leg['close']):
+
+            
 
         # else:
         #     print(d_f, leg['length'], self.speed)
@@ -461,13 +498,15 @@ class RaceEnv(gym.Env):
 def main():
     env = RaceEnv(render_mode='human')
 
+    # print(env.legs)
+
     obs = env.reset()
 
     action = {
         "target_mph": 35,
         "acceleration": 0.5,
         "deceleration": -0.5,
-        "try_loop": False,
+        "try_loop": True,
     }
 
     observation, reward, done = env.step(action)
@@ -498,15 +537,16 @@ def main():
             if test_leg['name'] == env.log['leg_names'][i]: leg = test_leg
 
         fig, axs = plt.subplots(3, 1, sharex=True)
-        axs[0].plot(dists, motor_powers, label='motor_power')
-        axs[1].plot(dists, speeds, label='mph')
-        axs[2].plot(dists, energies, label='watthours in battery')
+        axs[0].plot(times, dists, label='motor_power')
+        axs[1].plot(times, speeds, label='mph')
+        axs[2].plot(times, energies, label='watthours in battery')
 
-        axs[1].vlines(leg['stop_dists']*meters2miles(), ymin=0, ymax=55, colors='red', linewidth=0.5, label='stops')
+        # axs[1].vlines(leg['stop_dists']*meters2miles(), ymin=0, ymax=55, colors='red', linewidth=0.5, label='stops')
 
         fig.suptitle(env.log['leg_names'][i])
         fig.legend()
-    plt.show()
+    
+    # plt.show()
 
     env.close()
 
