@@ -1,29 +1,15 @@
 from raceEnv import RaceEnv
+from simulator.blit import Display
 
 
 
 def main():
-    env = RaceEnv(render_mode='human')
+    env = RaceEnv(render=False)
+    disp = Display(env)
+    while(True):
+        disp.update()
 
-    obs = env.reset()
 
-    action = env.action_space.sample()
-    print(action)
-
-    observation, reward, done = env.step(action)
-
-    while not done:
-        # Take a random action
-        action = env.action_space.sample()
-        observation, reward, done = env.step(action)
-        
-        # Render the game
-        env.render()
-        
-        if done == True:
-            break
-
-    env.close()
 
 
 
