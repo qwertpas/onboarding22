@@ -88,6 +88,16 @@ def ffill(x_0:list, y_0:list, epsilon=1e-6):
         i += 2
     return np.array(x), np.array(y)
 
+def trim_to_range(x, y, left, right):
+    '''trims x and y arrays so left < x < right'''
+    x = np.array(x)
+    y = np.array(y)
+    l = bisect_left(x, left)
+    r = bisect_left(x, right)
+    x_trim = x[l:r]
+    y_trim = y[l:r]
+    return x_trim, y_trim
+
 
 
 #testing

@@ -13,8 +13,6 @@ dir = os.path.dirname(__file__)
 sys.path.insert(0, dir+'/..')   #allow imports from parent directory "onboarding22"
 
 from util import *
-import forecast.openmeteo
-
 
 
 CHARGE_START_HOUR = 7   #battery taken out of impound
@@ -136,6 +134,7 @@ class Route():
         Generate 
         Weather data are 2D linear interpolants. To get the irradiance at a distance d and time t: leg_list\['solarradiance'](d, t)
         '''
+        import forecast.openmeteo
         
         if(stop_leg == None or stop_leg == -1):
             stop_leg = len(self.leg_list)

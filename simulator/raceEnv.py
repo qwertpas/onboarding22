@@ -1,28 +1,23 @@
 from datetime import timedelta
 import gym
 from gym import spaces
-from gym.utils.renderer import Renderer
-import pygame
 import numpy as np
 import json
-
 
 
 # import matplotlib
 # matplotlib.use('TkAgg')
 
 import matplotlib.pyplot as plt
-
 import sys, os
+
+
 dir = os.path.dirname(__file__)
 sys.path.insert(0, dir+'/../')   #allow imports from parent directory "onboarding22"
 
+from simulator.blit import BlitManager
 from route.route import *
 from util import *
-
-
-
-
 
 class RaceEnv(gym.Env):
 
@@ -72,6 +67,13 @@ class RaceEnv(gym.Env):
             "try_loop": spaces.Discrete(2),
         })
 
+        self.action_keyboard = {
+            "target_mph": 5,
+            "acceleration": self.car_props['max_accel'],
+            "deceleration": self.car_props['max_decel'],
+            "try_loop": False,
+        }
+
         self.log = {
             "leg_names": [],
             "times": [[]],
@@ -82,19 +84,81 @@ class RaceEnv(gym.Env):
             "array_powers": [[]],
         }
 
-        if(render):
-            self._renderer = Renderer(self.render_mode, self._render_frame)
-            self.window = None
-            self.window_size = 512  # The size of the PyGame window
-            self.clock = None
+        self.do_render = render
+        if(self.do_render):
+            import tkinter as tk
+            root = tk.Tk()
+            screen_width = root.winfo_screenwidth()
+            screen_height = root.winfo_screenheight()
+
+            plt.figure(figsize=(15, 13 * screen_height/screen_width))
+
+            ax_elev = plt.subplot2grid((3, 8), (0, 0), colspan=8)
+            ax_speed = plt.subplot2grid((3, 8), (1, 0), colspan=7, rowspan=2)
+            ax_power = plt.subplot2grid((3, 8), (1, 7), rowspan=1)
+            ax_battery = plt.subplot2grid((3, 8), (2, 7), rowspan=1)
+
+            #in meters
+            self.distwindow_l = 0
+            self.distwindow_r = miles2meters(10)
+
+            #elevation axes
+            dists_leg = np.arange(0, self.current_leg['length'], step=30)
+            elevs = self.current_leg['altitude'](dists_leg)
+            self.min_elev = min(elevs)
+            self.max_elev = max(elevs)
+            (self.ln_elev,) = ax_elev.plot(dists_leg * meters2miles(), elevs, '-')
+            (self.ln_distwindow_l,) = ax_elev.plot((meters2miles(self.distwindow_l), meters2miles(self.distwindow_l)), (self.min_elev, self.max_elev), 'y-')
+            (self.ln_distwindow_r,) = ax_elev.plot((meters2miles(self.distwindow_r), meters2miles(self.distwindow_r)), (self.min_elev, self.max_elev), 'y-')
+            (self.pt_elev,) = ax_elev.plot(0, self.current_leg['altitude'](0), 'ko', markersize=5)
+
+            #speed axes
+            ax_speed.set_xlim(0, meters2miles(self.distwindow_r))
+            ax_speed.set_ylim(0, self.car_props['max_mph'])
+
+            self.dists_window = np.arange(self.distwindow_l, self.distwindow_r, step=10)
+            limit_dist_pts, limit_pts = self.current_leg['speedlimit']
+            self.limit_dist_pts, self.limit_pts = ffill(limit_dist_pts, limit_pts)
+
+            l = bisect_left(self.limit_dist_pts, self.dists_window[0])
+            r = bisect_left(self.limit_dist_pts, self.dists_window[-1])
+            limit_dist_pts = limit_dist_pts[l:r]
+            limit_pts = limit_pts[l:r]
+            (self.ln_limit,) = ax_speed.plot(limit_dist_pts*meters2miles(), limit_pts*mpersec2mph(), label='limit', c='gray')
+            (self.ln_speed,) = ax_speed.plot(0, 0, label='speed', c='orange')
+
+            ax_speed.legend()
+
+
+            plt.tight_layout()
+            self.fig = plt.gcf()
+
+            self.bm = BlitManager(self.fig, (
+                self.pt_elev, self.ln_distwindow_l, self.ln_distwindow_r,
+                self.ln_limit, self.ln_speed
+            ))
+
+            plt.show(block=False)
+            plt.pause(.01) #wait a bit for things to be drawn and cached
+            self.bm.update()
+
+            def on_close(event):
+                sys.exit()
+            self.fig.canvas.mpl_connect('close_event', on_close)
+
+            def press(event):
+                print('press', event.key)
+                if(event.key == 'up'):
+                    self.action_keyboard['target_mph'] += 50
+                    self.pt_elev.set_xdata(self.action_keyboard['target_mph'] * meters2miles())
+                    self.pt_elev.set_ydata(self.current_leg['altitude'](self.action_keyboard['target_mph']))
+            self.fig.canvas.mpl_connect('key_press_event', press)
+            
+            
 
         print(f"Start race at {self.time}")
 
-    def _get_obs(self):
-        return {
-            'speed': self.speed,
-            'energy': self.energy,
-        }
+    
 
     def reset_leg(self):
         self.leg_progress = 0
@@ -116,11 +180,13 @@ class RaceEnv(gym.Env):
 
         self.reset_leg()
         
-        observation = self._get_obs()
-        self._renderer.reset()
-        self._renderer.render_step()
+        self.action_keyboard = {
+            "target_mph": 5,
+            "acceleration": self.car_props['max_accel'],
+            "deceleration": self.car_props['max_decel'],
+            "try_loop": False,
+        }
 
-        return observation
 
 
     def charge(self, time_length:timedelta):
@@ -439,65 +505,66 @@ class RaceEnv(gym.Env):
             self.charge(timedelta(hours=DRIVE_START_HOUR - CHARGE_START_HOUR))
             print("End of day")
 
-        # self._renderer.render_step()
+
+        if(self.do_render and self.leg_index < len(self.log['dists'])):
+            self.render()
 
         return self.done
 
 
 
     def render(self):
-        return self._renderer.get_renders()
 
-    def _render_frame(self, mode):
-        assert mode is not None
 
-        if self.window is None and mode == "human":
-            pygame.init()
-            pygame.display.init()
-            self.window = pygame.display.set_mode((self.window_size, self.window_size))
-        if self.clock is None and mode == "human":
-            self.clock = pygame.time.Clock()
+        self.pt_elev.set_xdata(meters2miles(self.leg_progress))
+        self.pt_elev.set_ydata(self.current_leg['altitude'](self.leg_progress))
 
-        canvas = pygame.Surface((self.window_size, self.window_size))
-        canvas.fill((255, 255, 255))
-        pix_square_size = (
-            self.window_size
-        )  # The size of a single grid square in pixels
+        if(self.leg_progress > miles2meters(7)):
+            self.distwindow_l = self.leg_progress - miles2meters(7)
+            self.distwindow_r = self.leg_progress + miles2meters(3)
+            self.dists_window = np.arange(self.distwindow_l, self.distwindow_r, step=10)
 
-        if mode == "human":
-            # The following line copies our drawings from `canvas` to the visible window
-            self.window.blit(canvas, canvas.get_rect())
-            pygame.event.pump()
-            pygame.display.update()
+        # print(self.leg_progress)
 
-            # We need to ensure that human-rendering occurs at the predefined framerate.
-            # The following line will automatically add a delay to keep the framerate stable.
-            self.clock.tick(self.metadata["render_fps"])
-        else:  # rgb_array
-            return np.transpose(
-                np.array(pygame.surfarray.pixels3d(canvas)), axes=(1, 0, 2)
-            )
+        
 
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                exit()
+        dists_so_far = np.array(self.log['dists'][self.leg_index])
+        speeds_so_far = np.array(self.log['speeds'][self.leg_index])
+        speeds_dists_window, speeds_window = trim_to_range(dists_so_far, speeds_so_far, self.dists_window[0], self.dists_window[-1])
+        self.ln_speed.set_xdata(meters2miles(speeds_dists_window-speeds_dists_window[0]))
+        self.ln_speed.set_ydata(mpersec2mph(speeds_window))
 
-    def close(self):
-        if self.window is not None:
-            pygame.display.quit()
-            pygame.quit()
+        dist_shift = speeds_dists_window[0]
+
+
+        limit_dist_pts, limit_pts = trim_to_range(self.limit_dist_pts, self.limit_pts, self.dists_window[0], self.dists_window[-1] + miles2meters(3))
+        self.ln_distwindow_l.set_xdata((meters2miles(self.distwindow_l), meters2miles(self.distwindow_l)))
+        self.ln_distwindow_r.set_xdata((meters2miles(self.distwindow_r), meters2miles(self.distwindow_r)))
+
+        self.ln_limit.set_xdata(meters2miles(limit_dist_pts - dist_shift))
+        self.ln_limit.set_ydata(mpersec2mph(limit_pts))
+
+        # print(speeds_dists_window-speeds_dists_window[0])
+
+
+        self.bm.update()
+        plt.pause(0.000001)
+
+
+
+
+
 
 
 def main():
 
 
-    import tkinter as tk
+    # import tkinter as tk
 
-    root = tk.Tk()
+    # root = tk.Tk()
 
-    screen_width = root.winfo_screenwidth()
-    screen_height = root.winfo_screenheight()
+    # screen_width = root.winfo_screenwidth()
+    # screen_height = root.winfo_screenheight()
 
     env = RaceEnv(render=True)
 
@@ -513,41 +580,39 @@ def main():
 
     while True:
         
-        action['target_mph']
+        # action['target_mph'] = np.random.randint(6, 35)
         done = env.step(action)
         
         if done == True:
             break
     
-    print(f"Total e`arned {env.miles_earned * meters2miles()} miles")
+    print(f"Total earned {env.miles_earned * meters2miles()} miles")
 
-    doPlot = True
-    if(not doPlot): return
+    # doPlot = True
+    # if(not doPlot): return
 
-    for i in range(len(env.log['leg_names'])):
-        times = env.log['times'][i]
-        dists = np.array(env.log['dists'][i]) * meters2miles()
-        speeds = np.array(env.log['speeds'][i]) * mpersec2mph()
-        energies = np.array(env.log['energies'][i]) / 3600.
-        motor_powers = np.array(env.log['motor_powers'][i])
-        array_powers = np.array(env.log['array_powers'][i])
+    # for i in range(len(env.log['leg_names'])):
+    #     times = env.log['times'][i]
+    #     dists = np.array(env.log['dists'][i]) * meters2miles()
+    #     speeds = np.array(env.log['speeds'][i]) * mpersec2mph()
+    #     energies = np.array(env.log['energies'][i]) / 3600.
+    #     motor_powers = np.array(env.log['motor_powers'][i])
+    #     array_powers = np.array(env.log['array_powers'][i])
         
-        for test_leg in env.legs:
-            if test_leg['name'] == env.log['leg_names'][i]: leg = test_leg
+    #     for test_leg in env.legs:
+    #         if test_leg['name'] == env.log['leg_names'][i]: leg = test_leg
 
-        fig, axs = plt.subplots(3, 1, sharex=True, figsize=(15, 13*screen_height/screen_width))
-        axs[0].plot(times, dists, label='motor_power')
-        axs[1].plot(times, speeds, label='mph')
-        axs[2].plot(times, energies, label='watthours in battery')
+    #     fig, axs = plt.subplots(3, 1, sharex=True, figsize=(15, 13*screen_height/screen_width))
+    #     axs[0].plot(times, dists, label='motor_power')
+    #     axs[1].plot(times, speeds, label='mph')
+    #     axs[2].plot(times, energies, label='watthours in battery')
 
-        # axs[1].vlines(leg['stop_dists']*meters2miles(), ymin=0, ymax=55, colors='red', linewidth=0.5, label='stops')
+    #     # axs[1].vlines(leg['stop_dists']*meters2miles(), ymin=0, ymax=55, colors='red', linewidth=0.5, label='stops')
 
-        fig.suptitle(env.log['leg_names'][i])
-        fig.legend()
+    #     fig.suptitle(env.log['leg_names'][i])
+    #     fig.legend()
     
-    plt.show()
-
-    env.close()
+    # plt.show()
 
 
 
