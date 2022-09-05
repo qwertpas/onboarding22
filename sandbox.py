@@ -98,7 +98,7 @@ window = sg.Window(
     finalize=True, 
     element_justification='center', 
     font='Helvetica 18',
-    size=(290, 290),
+    size=(1200, 800),
 )
 
 # add the plot to the window
