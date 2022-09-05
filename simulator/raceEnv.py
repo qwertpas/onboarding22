@@ -21,7 +21,7 @@ from util import *
 
 class RaceEnv(gym.Env):
 
-    def __init__(self, render=True, car="brizo_fsgp22", route="ind-gra_2022,7,9-10_5km_openmeteo"):
+    def __init__(self, render=True, car="brizo_fsgp22", route="ind-gra_2022,7,9-10_5km_openmeteo", pause_time=1e-6):
 
         cars_dir = os.path.dirname(__file__) + '/../cars'
         with open(f"{cars_dir}/{car}.json", 'r') as props_json:
@@ -29,6 +29,8 @@ class RaceEnv(gym.Env):
         
         route_obj = Route.open(route)
         self.legs = route_obj.leg_list
+
+        self.pause_time = pause_time
 
         self.legs_completed = 0
         self.current_leg = self.legs[0]
@@ -68,7 +70,7 @@ class RaceEnv(gym.Env):
             "try_loop": spaces.Discrete(2),
         })
 
-        self.action_keyboard = {
+        self.action = {
             "target_mph": 5,
             "acceleration": self.car_props['max_accel'],
             "deceleration": self.car_props['max_decel'],
@@ -337,7 +339,7 @@ class RaceEnv(gym.Env):
 
         assert action['acceleration'] > 0, "Acceleration must be positive"
         assert action['deceleration'] < 0, "Deceleration must be negative"
-        assert action['target_mph'] > min_mph and action['target_mph'] < max_mph, f"Target speed must be between {min_mph} mph and {max_mph} mph"
+        assert action['target_mph'] >= min_mph and action['target_mph'] <= max_mph, f"Target speed must be between {min_mph} mph and {max_mph} mph"
 
         a_acc = float(action['acceleration'])
         a_dec = float(action['deceleration'])
@@ -509,7 +511,7 @@ class RaceEnv(gym.Env):
         limit_dist_pts, limit_pts = trim_to_range(self.limit_dist_pts, self.limit_pts, self.dists_window[0], self.dists_window[-1])
 
         (self.ln_limit,) = ax_speed.plot(limit_dist_pts*meters2miles(), limit_pts*mpersec2mph(), label='Speed limit', c='gray')
-        (self.ln_speed,) = ax_speed.plot(0, 0, label='Car speed', c='orange')
+        (self.ln_speed,) = ax_speed.plot(0, 0, label='Car speed', c='black')
         (self.pt_speed,) = ax_speed.plot(0, 0, 'ko', markersize=5)
 
         ax_speed.legend(loc='upper left')
@@ -520,17 +522,27 @@ class RaceEnv(gym.Env):
         ax_power.set_xlim(0, 3600)
         ax_power.set_ylim(0, 1000)
         ax_power.get_xaxis().set_visible(False)
-        (self.ln_arraypower,) = ax_power.plot(0, 0, label='Array power', c='green')
+        (self.ln_arraypower,) = ax_power.plot(0, 0, label='Array power', c='orange')
         (self.ln_motorpower,) = ax_power.plot(0, 0, label='Motor power', c='red')
 
+        #battery axes
+        ax_battery.set_title("Battery Energy (Wh)")
+        ax_battery.set_xlim(0, 3600)
+        ax_battery.set_ylim(0, self.car_props['max_watthours'])
+        ax_battery.get_xaxis().set_visible(False)
+        (self.ln_battery,) = ax_battery.plot(0, self.energy, label='Battery energy', c='green')
+
+        #countdown and time text
+        self.tx = ax_speed.text(5, self.car_props['max_mph']-5, f"{self.current_leg['name']}", fontsize=20, ha='center')
 
         plt.tight_layout()
         self.fig = plt.gcf()
 
         self.bm = BlitManager(self.fig, (
             self.pt_elev, self.ln_distwindow_l, self.ln_distwindow_r,
-            self.ln_limit, self.ln_speed, self.pt_speed,
-            self.ln_arraypower
+            self.ln_limit, self.ln_speed, self.pt_speed, self.tx,
+            self.ln_arraypower,
+            self.ln_battery,
         ))
 
         plt.show(block=False)
@@ -543,21 +555,18 @@ class RaceEnv(gym.Env):
         self.fig.canvas.mpl_connect('close_event', on_close)
 
         def press(event):
-            print('press', event.key)
             if(event.key == 'up'):
-                self.action_keyboard['target_mph'] += 50
-                self.pt_elev.set_xdata(self.action_keyboard['target_mph'] * meters2miles())
-                self.pt_elev.set_ydata(self.current_leg['altitude'](self.action_keyboard['target_mph']))
+                self.action['target_mph'] = min(self.action['target_mph']+2, self.car_props['max_mph'])
+            if(event.key == 'down'):
+                self.action['target_mph'] = max(self.action['target_mph']-2, 5)
+
         self.fig.canvas.mpl_connect('key_press_event', press)
 
 
-
-
-
-        self.tx = ax_speed.text(5, self.car_props['max_mph']-5, f"{self.current_leg['name']}", fontsize=20, ha='center')
         plt.pause(1)
         for i in [3, 2, 1]:
             self.tx.set_text(i)
+            self.bm.update()
             plt.pause(1)
         self.tx.set_text(f"{self.time.strftime('%m/%d/%Y, %H:%M')}")
 
@@ -603,33 +612,27 @@ class RaceEnv(gym.Env):
         self.ln_arraypower.set_xdata((times_window-time_shift))
         self.ln_arraypower.set_ydata(arraypowers_window)
 
+        battery_so_far = np.array(self.log['energies'][self.legs_completed])/3600
+        times_window, battery_window = trim_to_range(times_so_far, battery_so_far, self.time.timestamp()-3600, self.time.timestamp())
+        self.ln_battery.set_xdata((times_window-time_shift))
+        self.ln_battery.set_ydata(battery_window)
+        print(battery_window)
+
         self.tx.set_text(f"{self.time.strftime('%m/%d/%Y, %H:%M')}")
 
-
         self.bm.update()
-        plt.pause(1e-6)
-
-
-
-
+        plt.pause(self.pause_time)
 
 
 
 def main():
 
 
-    # import tkinter as tk
-
-    # root = tk.Tk()
-
-    # screen_width = root.winfo_screenwidth()
-    # screen_height = root.winfo_screenheight()
-
     env = RaceEnv(render=True)
 
     # print(env.legs)
 
-    action = {
+    env.action = {
         "target_mph": 54,
         "acceleration": 0.5,
         "deceleration": -0.5,
@@ -640,38 +643,12 @@ def main():
     while True:
         
         # action['target_mph'] = np.random.randint(6, 35)
-        done = env.step(action)
+        done = env.step(env.action)
         
         if done == True:
             break
     
     print(f"Total earned {env.miles_earned * meters2miles()} miles")
-
-    # doPlot = True
-    # if(not doPlot): return
-
-    # for i in range(len(env.log['leg_names'])):
-    #     times = env.log['times'][i]
-    #     dists = np.array(env.log['dists'][i]) * meters2miles()
-    #     speeds = np.array(env.log['speeds'][i]) * mpersec2mph()
-    #     energies = np.array(env.log['energies'][i]) / 3600.
-    #     motor_powers = np.array(env.log['motor_powers'][i])
-    #     array_powers = np.array(env.log['array_powers'][i])
-        
-    #     for test_leg in env.legs:
-    #         if test_leg['name'] == env.log['leg_names'][i]: leg = test_leg
-
-    #     fig, axs = plt.subplots(3, 1, sharex=True, figsize=(15, 13*screen_height/screen_width))
-    #     axs[0].plot(times, dists, label='motor_power')
-    #     axs[1].plot(times, speeds, label='mph')
-    #     axs[2].plot(times, energies, label='watthours in battery')
-
-    #     # axs[1].vlines(leg['stop_dists']*meters2miles(), ymin=0, ymax=55, colors='red', linewidth=0.5, label='stops')
-
-    #     fig.suptitle(env.log['leg_names'][i])
-    #     fig.legend()
-    
-    # plt.show()
 
 
 
