@@ -30,6 +30,7 @@ class RaceEnv(gym.Env):
         route_obj = Route.open(route)
         self.legs = route_obj.leg_list
 
+        self.legs_completed = 0
         self.current_leg = self.legs[0]
         self.leg_index = 0
         self.leg_progress = 0
@@ -86,74 +87,7 @@ class RaceEnv(gym.Env):
 
         self.do_render = render
         if(self.do_render):
-            import tkinter as tk
-            root = tk.Tk()
-            screen_width = root.winfo_screenwidth()
-            screen_height = root.winfo_screenheight()
-
-            plt.figure(figsize=(15, 13 * screen_height/screen_width))
-
-            ax_elev = plt.subplot2grid((3, 8), (0, 0), colspan=8)
-            ax_speed = plt.subplot2grid((3, 8), (1, 0), colspan=7, rowspan=2)
-            ax_power = plt.subplot2grid((3, 8), (1, 7), rowspan=1)
-            ax_battery = plt.subplot2grid((3, 8), (2, 7), rowspan=1)
-
-            #in meters
-            self.distwindow_l = 0
-            self.distwindow_r = miles2meters(10)
-
-            #elevation axes
-            dists_leg = np.arange(0, self.current_leg['length'], step=30)
-            elevs = self.current_leg['altitude'](dists_leg)
-            self.min_elev = min(elevs)
-            self.max_elev = max(elevs)
-            (self.ln_elev,) = ax_elev.plot(dists_leg * meters2miles(), elevs, '-')
-            (self.ln_distwindow_l,) = ax_elev.plot((meters2miles(self.distwindow_l), meters2miles(self.distwindow_l)), (self.min_elev, self.max_elev), 'y-')
-            (self.ln_distwindow_r,) = ax_elev.plot((meters2miles(self.distwindow_r), meters2miles(self.distwindow_r)), (self.min_elev, self.max_elev), 'y-')
-            (self.pt_elev,) = ax_elev.plot(0, self.current_leg['altitude'](0), 'ko', markersize=5)
-
-            #speed axes
-            ax_speed.set_xlim(0, meters2miles(self.distwindow_r))
-            ax_speed.set_ylim(0, self.car_props['max_mph'])
-
-            self.dists_window = np.arange(self.distwindow_l, self.distwindow_r, step=10)
-            limit_dist_pts, limit_pts = self.current_leg['speedlimit']
-            self.limit_dist_pts, self.limit_pts = ffill(limit_dist_pts, limit_pts)
-
-            l = bisect_left(self.limit_dist_pts, self.dists_window[0])
-            r = bisect_left(self.limit_dist_pts, self.dists_window[-1])
-            limit_dist_pts = limit_dist_pts[l:r]
-            limit_pts = limit_pts[l:r]
-            (self.ln_limit,) = ax_speed.plot(limit_dist_pts*meters2miles(), limit_pts*mpersec2mph(), label='limit', c='gray')
-            (self.ln_speed,) = ax_speed.plot(0, 0, label='speed', c='orange')
-
-            ax_speed.legend()
-
-
-            plt.tight_layout()
-            self.fig = plt.gcf()
-
-            self.bm = BlitManager(self.fig, (
-                self.pt_elev, self.ln_distwindow_l, self.ln_distwindow_r,
-                self.ln_limit, self.ln_speed
-            ))
-
-            plt.show(block=False)
-            plt.pause(.01) #wait a bit for things to be drawn and cached
-            self.bm.update()
-
-            def on_close(event):
-                sys.exit()
-            self.fig.canvas.mpl_connect('close_event', on_close)
-
-            def press(event):
-                print('press', event.key)
-                if(event.key == 'up'):
-                    self.action_keyboard['target_mph'] += 50
-                    self.pt_elev.set_xdata(self.action_keyboard['target_mph'] * meters2miles())
-                    self.pt_elev.set_ydata(self.current_leg['altitude'](self.action_keyboard['target_mph']))
-            self.fig.canvas.mpl_connect('key_press_event', press)
-            
+            self.render_init()
             
 
         print(f"Start race at {self.time}")
@@ -168,6 +102,12 @@ class RaceEnv(gym.Env):
         self.limit = None
         self.next_limit_dist = 0
         self.next_limit_index = 0
+        self.distwindow_l = 0
+        self.distwindow_r = miles2meters(10)
+        self.dists_window = np.arange(self.distwindow_l, self.distwindow_r, step=10)
+        limit_dist_pts, limit_pts = self.current_leg['speedlimit']
+        self.limit_dist_pts, self.limit_pts = ffill(limit_dist_pts, limit_pts)
+        self.render_init()
         
 
     def reset(self):
@@ -175,6 +115,7 @@ class RaceEnv(gym.Env):
         super().reset()
 
         self.leg_index = 0
+        self.legs_completed = 0
         self.time = self.legs[0]['start']
         self.energy = self.car_props['max_watthours']*3600
 
@@ -382,7 +323,7 @@ class RaceEnv(gym.Env):
         d_0 = self.leg_progress     #meters completed of the current leg
         w = leg['headwind'](d_0, self.time.timestamp())
 
-        self.log['times'][-1].append(self.time)
+        self.log['times'][-1].append(self.time.timestamp())
         self.log['dists'][-1].append(self.leg_progress)
         self.log['speeds'][-1].append(self.speed)
         self.log['energies'][-1].append(self.energy)
@@ -489,8 +430,17 @@ class RaceEnv(gym.Env):
         # CHECK IF COMPLETED CURRENT LEG
         if(d_f >= leg['length']):
             print(f"Completed leg: {leg['name']} at {self.time}")
+            self.legs_completed += 1
             self.try_loop = action['try_loop']
             self.process_leg_finish() #will update leg and self.done if needed
+
+
+            #just do the first leg for now
+            if(self.leg_index != 0):
+                self.done = True
+                return self.done
+
+            self.current_leg = self.legs[self.leg_index]
             self.reset_leg()
             
             self.log['leg_names'].append(leg['name'])
@@ -506,16 +456,112 @@ class RaceEnv(gym.Env):
             print("End of day")
 
 
-        if(self.do_render and self.leg_index < len(self.log['dists'])):
+        if(self.do_render):
             self.render()
 
         return self.done
 
 
 
+
+    def render_init(self):
+        plt.close('all')
+
+        import tkinter as tk
+        root = tk.Tk()
+        screen_width = root.winfo_screenwidth()
+        screen_height = root.winfo_screenheight()
+
+        plt.figure(figsize=(15, 13 * screen_height/screen_width))
+
+        ax_elev = plt.subplot2grid((3, 8), (0, 0), colspan=8)
+        ax_speed = plt.subplot2grid((3, 8), (1, 0), colspan=7, rowspan=2)
+        ax_power = plt.subplot2grid((3, 8), (1, 7), rowspan=1)
+        ax_battery = plt.subplot2grid((3, 8), (2, 7), rowspan=1)
+
+        #in meters
+        self.distwindow_l = 0
+        self.distwindow_r = miles2meters(10)
+
+        #elevation axes
+        ax_elev.set_ylabel("Elevation (meters)")
+        dists_leg = np.arange(0, self.current_leg['length'], step=30)
+        elevs = self.current_leg['altitude'](dists_leg)
+        self.min_elev = min(elevs)
+        self.max_elev = max(elevs)
+        (self.ln_elev,) = ax_elev.plot(dists_leg * meters2miles(), elevs, '-', label="elevation")
+        (self.ln_distwindow_l,) = ax_elev.plot((meters2miles(self.distwindow_l), meters2miles(self.distwindow_l)), (self.min_elev, self.max_elev), 'y-')
+        (self.ln_distwindow_r,) = ax_elev.plot((meters2miles(self.distwindow_r), meters2miles(self.distwindow_r)), (self.min_elev, self.max_elev), 'y-')
+        (self.pt_elev,) = ax_elev.plot(0, self.current_leg['altitude'](0), 'ko', markersize=5)
+        ax_elev.legend(loc='lower left')
+
+
+        #speed axes
+        ax_speed.set_ylabel("Speed (mph)")
+        ax_speed.set_xlabel("Distance (miles)")
+        ax_speed.set_xlim(0, meters2miles(self.distwindow_r))
+        ax_speed.set_ylim(0, self.car_props['max_mph'])
+
+        self.dists_window = np.arange(self.distwindow_l, self.distwindow_r, step=10)
+        limit_dist_pts, limit_pts = self.current_leg['speedlimit']
+        self.limit_dist_pts, self.limit_pts = ffill(limit_dist_pts, limit_pts)
+
+        limit_dist_pts, limit_pts = trim_to_range(self.limit_dist_pts, self.limit_pts, self.dists_window[0], self.dists_window[-1])
+
+        (self.ln_limit,) = ax_speed.plot(limit_dist_pts*meters2miles(), limit_pts*mpersec2mph(), label='Speed limit', c='gray')
+        (self.ln_speed,) = ax_speed.plot(0, 0, label='Car speed', c='orange')
+        (self.pt_speed,) = ax_speed.plot(0, 0, 'ko', markersize=5)
+
+        ax_speed.legend(loc='upper left')
+
+
+        #power axes
+        ax_power.set_title("Array power (W)")
+        ax_power.set_xlim(0, 3600)
+        ax_power.set_ylim(0, 1000)
+        ax_power.get_xaxis().set_visible(False)
+        (self.ln_arraypower,) = ax_power.plot(0, 0, label='Array power', c='green')
+        (self.ln_motorpower,) = ax_power.plot(0, 0, label='Motor power', c='red')
+
+
+        plt.tight_layout()
+        self.fig = plt.gcf()
+
+        self.bm = BlitManager(self.fig, (
+            self.pt_elev, self.ln_distwindow_l, self.ln_distwindow_r,
+            self.ln_limit, self.ln_speed, self.pt_speed,
+            self.ln_arraypower
+        ))
+
+        plt.show(block=False)
+        plt.pause(.01) #wait a bit for things to be drawn and cached
+        self.bm.update()
+
+        #closing the first window deletes the second window
+        def on_close(event):
+            sys.exit()
+        self.fig.canvas.mpl_connect('close_event', on_close)
+
+        def press(event):
+            print('press', event.key)
+            if(event.key == 'up'):
+                self.action_keyboard['target_mph'] += 50
+                self.pt_elev.set_xdata(self.action_keyboard['target_mph'] * meters2miles())
+                self.pt_elev.set_ydata(self.current_leg['altitude'](self.action_keyboard['target_mph']))
+        self.fig.canvas.mpl_connect('key_press_event', press)
+
+
+
+
+
+        self.tx = ax_speed.text(5, self.car_props['max_mph']-5, f"{self.current_leg['name']}", fontsize=20, ha='center')
+        plt.pause(1)
+        for i in [3, 2, 1]:
+            self.tx.set_text(i)
+            plt.pause(1)
+        self.tx.set_text(f"{self.time.strftime('%m/%d/%Y, %H:%M')}")
+
     def render(self):
-
-
         self.pt_elev.set_xdata(meters2miles(self.leg_progress))
         self.pt_elev.set_ydata(self.current_leg['altitude'](self.leg_progress))
 
@@ -523,32 +569,45 @@ class RaceEnv(gym.Env):
             self.distwindow_l = self.leg_progress - miles2meters(7)
             self.distwindow_r = self.leg_progress + miles2meters(3)
             self.dists_window = np.arange(self.distwindow_l, self.distwindow_r, step=10)
-
-        # print(self.leg_progress)
-
         
 
-        dists_so_far = np.array(self.log['dists'][self.leg_index])
-        speeds_so_far = np.array(self.log['speeds'][self.leg_index])
+        dists_so_far = np.array(self.log['dists'][self.legs_completed])
+        speeds_so_far = np.array(self.log['speeds'][self.legs_completed])
         speeds_dists_window, speeds_window = trim_to_range(dists_so_far, speeds_so_far, self.dists_window[0], self.dists_window[-1])
-        self.ln_speed.set_xdata(meters2miles(speeds_dists_window-speeds_dists_window[0]))
+        
+        try:
+            dist_shift = speeds_dists_window[0]
+        except:
+            dist_shift = 0
+
+        self.ln_speed.set_xdata(meters2miles(speeds_dists_window-dist_shift))
         self.ln_speed.set_ydata(mpersec2mph(speeds_window))
 
-        dist_shift = speeds_dists_window[0]
-
-
-        limit_dist_pts, limit_pts = trim_to_range(self.limit_dist_pts, self.limit_pts, self.dists_window[0], self.dists_window[-1] + miles2meters(3))
+        limit_dist_pts, limit_pts = trim_to_range(self.limit_dist_pts, self.limit_pts, self.dists_window[0] - miles2meters(1), self.dists_window[-1] + miles2meters(3))
         self.ln_distwindow_l.set_xdata((meters2miles(self.distwindow_l), meters2miles(self.distwindow_l)))
         self.ln_distwindow_r.set_xdata((meters2miles(self.distwindow_r), meters2miles(self.distwindow_r)))
 
         self.ln_limit.set_xdata(meters2miles(limit_dist_pts - dist_shift))
         self.ln_limit.set_ydata(mpersec2mph(limit_pts))
+        
+        self.pt_speed.set_xdata(meters2miles(self.leg_progress-dist_shift))
+        self.pt_speed.set_ydata(mpersec2mph(self.speed))
 
-        # print(speeds_dists_window-speeds_dists_window[0])
+        times_so_far = np.array(self.log['times'][self.legs_completed])
+        arraypowers_so_far = np.array(self.log['array_powers'][self.legs_completed])
+        times_window, arraypowers_window = trim_to_range(times_so_far, arraypowers_so_far, self.time.timestamp()-3600, self.time.timestamp())
+        try:
+            time_shift = times_window[0]
+        except:
+            time_shift = 0
+        self.ln_arraypower.set_xdata((times_window-time_shift))
+        self.ln_arraypower.set_ydata(arraypowers_window)
+
+        self.tx.set_text(f"{self.time.strftime('%m/%d/%Y, %H:%M')}")
 
 
         self.bm.update()
-        plt.pause(0.000001)
+        plt.pause(1e-6)
 
 
 
@@ -571,7 +630,7 @@ def main():
     # print(env.legs)
 
     action = {
-        "target_mph": 27,
+        "target_mph": 54,
         "acceleration": 0.5,
         "deceleration": -0.5,
         "try_loop": False,
