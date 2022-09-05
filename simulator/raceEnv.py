@@ -5,6 +5,12 @@ from gym.utils.renderer import Renderer
 import pygame
 import numpy as np
 import json
+
+
+
+# import matplotlib
+# matplotlib.use('TkAgg')
+
 import matplotlib.pyplot as plt
 
 import sys, os
@@ -13,6 +19,9 @@ sys.path.insert(0, dir+'/../')   #allow imports from parent directory "onboardin
 
 from route.route import *
 from util import *
+
+
+
 
 
 class RaceEnv(gym.Env):
@@ -481,12 +490,21 @@ class RaceEnv(gym.Env):
 
 
 def main():
+
+
+    import tkinter as tk
+
+    root = tk.Tk()
+
+    screen_width = root.winfo_screenwidth()
+    screen_height = root.winfo_screenheight()
+
     env = RaceEnv(render=True)
 
     # print(env.legs)
 
     action = {
-        "target_mph": 35,
+        "target_mph": 27,
         "acceleration": 0.5,
         "deceleration": -0.5,
         "try_loop": False,
@@ -501,7 +519,7 @@ def main():
         if done == True:
             break
     
-    print(f"Total earned {env.miles_earned * meters2miles()} miles")
+    print(f"Total e`arned {env.miles_earned * meters2miles()} miles")
 
     doPlot = True
     if(not doPlot): return
@@ -517,7 +535,7 @@ def main():
         for test_leg in env.legs:
             if test_leg['name'] == env.log['leg_names'][i]: leg = test_leg
 
-        fig, axs = plt.subplots(3, 1, sharex=True)
+        fig, axs = plt.subplots(3, 1, sharex=True, figsize=(15, 13*screen_height/screen_width))
         axs[0].plot(times, dists, label='motor_power')
         axs[1].plot(times, speeds, label='mph')
         axs[2].plot(times, energies, label='watthours in battery')

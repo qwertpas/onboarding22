@@ -1,97 +1,109 @@
-# import matplotlib.pyplot as plt
-# import numpy as np
-
-# x = np.linspace(0, 6*np.pi, 100)
-# y = np.zeros_like(x)
-
-# plt.ion()   #enter interactive mode
-
-# fig = plt.figure()
-# ax = fig.add_subplot(111)
-# line1, = ax.plot(x, y, 'r-') # Returns a tuple of line objects, thus the comma
-# ax.set_ylim((-1, 1))
-
-
-# plt.show()
-
-# fig.canvas.mpl_connect('close_event', exit)
-
-# for phase in np.linspace(0, 10*np.pi, 500):
-#     line1.set_ydata(np.sin(x + phase))
-#     fig.canvas.flush_events()
-#     plt.pause(1/30.)
-
-
-import time
-from matplotlib import pyplot as plt
+from matplotlib.ticker import NullFormatter  # useful for `logit` scale
+import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import PySimpleGUI as sg
+import matplotlib
+matplotlib.use('TkAgg')
+
+"""
+Demonstrates one way of embedding Matplotlib figures into a PySimpleGUI window.
+Basic steps are:
+ * Create a Canvas Element
+ * Layout form
+ * Display form (NON BLOCKING)
+ * Draw plots onto convas
+ * Display form (BLOCKING)
+ 
+ Based on information from: https://matplotlib.org/3.1.0/gallery/user_interfaces/embedding_in_tk_sgskip.html
+ (Thank you Em-Bo & dirck)
+"""
 
 
-def live_update_demo(blit = False):
-    x = np.linspace(0,50., num=100)
-    X,Y = np.meshgrid(x,x)
-    fig = plt.figure()
-    ax1 = fig.add_subplot(2, 1, 1)
-    ax2 = fig.add_subplot(2, 1, 2)
-
-    img = ax1.imshow(X, vmin=-1, vmax=1, interpolation="None", cmap="RdBu")
-
-
-    line, = ax2.plot([], lw=3)
-    text = ax2.text(0.8,0.5, "")
-
-    ax2.set_xlim(x.min(), x.max())
-    ax2.set_ylim([-1.1, 1.1])
-
-    fig.canvas.draw()   # note that the first draw comes before setting data 
-
-
-    if blit:
-        # cache the background
-        axbackground = fig.canvas.copy_from_bbox(ax1.bbox)
-        ax2background = fig.canvas.copy_from_bbox(ax2.bbox)
-
-    plt.show(block=True)
-
-
-    t_start = time.time()
-    k=0.
-
-    for i in np.arange(1000):
-        img.set_data(np.sin(X/3.+k)*np.cos(Y/3.+k))
-        line.set_data(x, np.sin(x/3.+k))
-        tx = 'Mean Frame Rate:\n {fps:.3f}FPS'.format(fps= ((i+1) / (time.time() - t_start)) ) 
-        text.set_text(tx)
-        #print tx
-        k+=0.11
-        if blit:
-            # restore background
-            fig.canvas.restore_region(axbackground)
-            fig.canvas.restore_region(ax2background)
-
-            # redraw just the points
-            ax1.draw_artist(img)
-            ax2.draw_artist(line)
-            ax2.draw_artist(text)
-
-            # fill in the axes rectangle
-            fig.canvas.blit(ax1.bbox)
-            fig.canvas.blit(ax2.bbox)
-
-            # in this post http://bastibe.de/2013-05-30-speeding-up-matplotlib.html
-            # it is mentionned that blit causes strong memory leakage. 
-            # however, I did not observe that.
-
-        else:
-            # redraw everything
-            fig.canvas.draw()
-
-        fig.canvas.flush_events()
-        #alternatively you could use
-        #plt.pause(0.000000000001) 
-        # however plt.pause calls canvas.draw(), as can be read here:
-        #http://bastibe.de/2013-05-30-speeding-up-matplotlib.html
+# ------------------------------- PASTE YOUR MATPLOTLIB CODE HERE -------------------------------
+#
+# # Goal is to have your plot contained in the variable  "fig"
+#
+# # Fixing random state for reproducibility
+# np.random.seed(19680801)
+#
+# # make up some data in the interval ]0, 1[
+# y = np.random.normal(loc=0.5, scale=0.4, size=1000)
+# y = y[(y > 0) & (y < 1)]
+# y.sort()
+# x = np.arange(len(y))
+#
+# # plot with various axes scales
+# plt.figure(1)
+#
+# # linear
+# plt.subplot(221)
+# plt.plot(x, y)
+# plt.yscale('linear')
+# plt.title('linear')
+# plt.grid(True)
+#
+# # log
+# plt.subplot(222)
+# plt.plot(x, y)
+# plt.yscale('log')
+# plt.title('log')
+# plt.grid(True)
+#
+# # symmetric log
+# plt.subplot(223)
+# plt.plot(x, y - y.mean())
+# plt.yscale('symlog', linthreshy=0.01)
+# plt.title('symlog')
+# plt.grid(True)
+#
+# # logit
+# plt.subplot(224)
+# plt.plot(x, y)
+# plt.yscale('logit')
+# plt.title('logit')
+# plt.grid(True)
+# plt.gca().yaxis.set_minor_formatter(NullFormatter())
+# plt.subplots_adjust(top=0.92, bottom=0.08, left=0.10, right=0.95, hspace=0.25,
+#                     wspace=0.35)
+# fig = plt.gcf()
+#
 
 
-live_update_demo(True)   # 175 fps
-#live_update_demo(False) # 28 fps
+fig = matplotlib.figure.Figure(figsize=(5, 4), dpi=100)
+t = np.arange(0, 3, .01)
+fig.add_subplot(111).plot(t, 2 * np.sin(2 * np.pi * t))
+
+# ------------------------------- END OF YOUR MATPLOTLIB CODE -------------------------------
+
+# ------------------------------- Beginning of Matplotlib helper code -----------------------
+
+def draw_figure(canvas, figure):
+    figure_canvas_agg = FigureCanvasTkAgg(figure, canvas)
+    figure_canvas_agg.draw()
+    figure_canvas_agg.get_tk_widget().pack(side='top', fill='both', expand=1)
+    return figure_canvas_agg
+
+# ------------------------------- Beginning of GUI CODE -------------------------------
+
+# define the window layout
+layout = [[sg.Text('Plot test')],
+          [sg.Canvas(key='-CANVAS-')],
+          [sg.Button('Ok')]]
+
+# create the form and show it without the plot
+window = sg.Window(
+    'Demo Application - Embedding Matplotlib In PySimpleGUI', 
+    layout, 
+    finalize=True, 
+    element_justification='center', 
+    font='Helvetica 18',
+    size=(290, 290),
+)
+
+# add the plot to the window
+fig_canvas_agg = draw_figure(window['-CANVAS-'].TKCanvas, fig)
+
+event, values = window.read()
+
+window.close()
